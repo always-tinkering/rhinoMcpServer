@@ -69,6 +69,9 @@ def receive_message():
         # Read raw bytes from stdin to avoid any potential encoding issues
         line = sys.stdin.buffer.readline()
         if not line:
+            # This is an EOF, but we should not exit the server!
+            # Claude Desktop disconnects after initialization, which is expected
+            logging.info("Detected EOF on stdin - client disconnected, waiting for reconnection")
             return None  # EOF
         
         # Decode the bytes to string
@@ -293,6 +296,9 @@ def main_loop():
     keepalive_thread = Thread(target=keepalive_ping, daemon=True)
     keepalive_thread.start()
     
+    # Flag to track initialization status - we need to stay alive after initialization
+    initialization_complete = False
+    
     while not EXIT_FLAG:
         try:
             # Read message from stdin
@@ -301,12 +307,22 @@ def main_loop():
             # Handle EOF or empty line
             if message is None:
                 # This is a normal client disconnect
-                logging.info("Client disconnected (input stream EOF)")
+                if initialization_complete:
+                    logging.info("Client disconnected (expected behavior) - waiting for reconnection")
+                else:
+                    logging.info("Client disconnected before initialization completed")
+                
+                # Don't exit! Just wait for the next connection
                 time.sleep(1)  # Prevent CPU spinning
                 continue
             
             # Process message
             response = process_message(message)
+            
+            # Check if this was an initialization request
+            if isinstance(response, dict) and "result" in response and "serverInfo" in response.get("result", {}):
+                initialization_complete = True
+                logging.info("Initialization completed successfully, server will remain alive for tool calls")
             
             # Send response
             send_json_response(response)

@@ -28,7 +28,22 @@ cleanup() {
     SERVER_PID=$(cat "logs/standalone_server.pid")
     if ps -p "$SERVER_PID" > /dev/null; then
       log "Stopping Python server (PID: $SERVER_PID)"
-      kill -15 "$SERVER_PID" 2>/dev/null || kill -9 "$SERVER_PID" 2>/dev/null
+      # First try SIGTERM (graceful shutdown)
+      kill -15 "$SERVER_PID" 2>/dev/null
+      
+      # Wait up to 3 seconds for graceful shutdown
+      for i in {1..6}; do
+        if ! ps -p "$SERVER_PID" > /dev/null; then
+          break
+        fi
+        sleep 0.5
+      done
+      
+      # If still running, force kill
+      if ps -p "$SERVER_PID" > /dev/null; then
+        log "Server didn't exit gracefully, using SIGKILL"
+        kill -9 "$SERVER_PID" 2>/dev/null
+      fi
     fi
     rm -f "logs/standalone_server.pid"
   fi
@@ -36,11 +51,12 @@ cleanup() {
   log "Cleanup complete"
 }
 
-# Set up trap for script exit
+# Set up trap for script exit with higher priority
 trap cleanup EXIT INT TERM
 
 # Start the Python server
 log "Starting Python MCP server"
+log "Note: The server will remain running during normal client disconnections. This is expected behavior."
 
 # Set environment variables to help Python
 export PYTHONUNBUFFERED=1
