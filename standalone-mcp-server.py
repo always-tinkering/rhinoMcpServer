@@ -46,6 +46,7 @@ CONNECTION_EVENT = Event()  # Event to signal when a connection is made
 RECONNECT_TIMEOUT = 60.0  # Wait up to 60 seconds for reconnection before checking status
 MESSAGE_QUEUE = queue.Queue()  # Queue for messages between threads
 NEW_MESSAGE_EVENT = Event()  # Event to signal when a new message is available
+STDIN_EOF_DETECTED = False  # Flag to indicate if stdin EOF has been detected
 
 # Create a PID file to track this process
 pid_file = os.path.join(log_dir, "standalone_server.pid")
@@ -94,6 +95,8 @@ def receive_message(timeout=None, from_queue=False):
     Returns:
         The message string or None if EOF or timeout
     """
+    global STDIN_EOF_DETECTED
+    
     if from_queue:
         # Try to get a message from the queue
         try:
@@ -159,6 +162,7 @@ def receive_message(timeout=None, from_queue=False):
         line = sys.stdin.buffer.readline()
         if not line:
             logging.info("Detected EOF on stdin - client disconnected, waiting for reconnection")
+            STDIN_EOF_DETECTED = True  # Mark that we've detected EOF
             return None  # EOF
         
         # Decode the bytes to string
@@ -425,7 +429,7 @@ def connection_monitor():
     Monitor thread that prevents the server from exiting when clients disconnect.
     Checks server health and performs periodic actions.
     """
-    global EXIT_FLAG, SERVER_STATE
+    global EXIT_FLAG, SERVER_STATE, STDIN_EOF_DETECTED
     
     logging.info("Connection monitor started")
     
@@ -433,6 +437,12 @@ def connection_monitor():
         try:
             # Log server state periodically
             logging.debug(f"Server state: {SERVER_STATE}")
+            
+            # If stdin EOF was detected but server is initialized, keep the server alive
+            if STDIN_EOF_DETECTED and SERVER_STATE == "initialized":
+                logging.info("Stdin EOF detected but server is initialized - staying alive for future connections")
+                # Clear the EOF flag to avoid spamming the logs
+                STDIN_EOF_DETECTED = False
             
             # Check if Rhino is still accessible
             if SERVER_STATE == "initialized":
@@ -454,9 +464,12 @@ def persist_stdin():
     This is crucial for the MCP protocol. This thread reads messages from stdin
     and puts them into a queue for the main thread to process.
     """
-    global EXIT_FLAG, SERVER_STATE
+    global EXIT_FLAG, SERVER_STATE, STDIN_EOF_DETECTED
     
     logging.info("Stdin persistence thread started")
+    
+    consecutive_failures = 0
+    max_failures = 5  # Allow 5 consecutive failures before backing off
     
     while not EXIT_FLAG:
         try:
@@ -466,13 +479,27 @@ def persist_stdin():
             line = sys.stdin.buffer.readline()
             if not line:
                 logging.warning("EOF detected on stdin in persistence thread - client disconnected")
+                STDIN_EOF_DETECTED = True
+                
                 # Don't exit if we're initialized - just wait for reconnection
                 if SERVER_STATE == "initialized":
                     logging.info("Server is in initialized state - waiting for reconnection")
+                    # After initialization, the server should NEVER exit even if stdin is closed
                     time.sleep(1.0)
+                    consecutive_failures += 1
+                    
+                    # If we keep getting failures, back off to reduce CPU usage
+                    if consecutive_failures > max_failures:
+                        time.sleep(5.0)
+                    
                     continue
-                time.sleep(0.5)  # Short sleep to prevent tight loops on EOF
-                continue
+                else:
+                    # If not initialized yet, wait but don't exit immediately
+                    time.sleep(0.5)
+                    continue
+                
+            # Reset the consecutive failures counter on successful read
+            consecutive_failures = 0
                 
             # Decode the bytes to string
             line_str = line.decode('utf-8').strip()
@@ -495,6 +522,7 @@ def persist_stdin():
             logging.error(f"Error in persist_stdin: {str(e)}")
             logging.error(f"Stack trace: {traceback.format_exc()}")
             time.sleep(1)
+            consecutive_failures += 1
             
             # Don't exit if we're in initialized state - just recover and continue
             if SERVER_STATE == "initialized":
@@ -505,12 +533,17 @@ def persist_stdin():
 
 def keepalive_ping():
     """Thread function to keep the server alive during client reconnections"""
-    global EXIT_FLAG
+    global EXIT_FLAG, STDIN_EOF_DETECTED
     
     logging.info("Keepalive thread started")
     
     while not EXIT_FLAG:
         try:
+            # Check if stdin has reported EOF but we're supposed to stay alive
+            if STDIN_EOF_DETECTED and SERVER_STATE == "initialized":
+                logging.info("KEEPALIVE: Server is in initialized state with EOF on stdin - staying alive")
+                STDIN_EOF_DETECTED = False  # Reset the flag
+            
             # Just write a message to logs every 30 seconds to show we're alive
             logging.debug("Keepalive thread active - server is waiting for requests")
             
@@ -524,7 +557,7 @@ def keepalive_ping():
 
 def main_loop():
     """Main server loop to process messages"""
-    global SERVER_STATE, EXIT_FLAG
+    global SERVER_STATE, EXIT_FLAG, STDIN_EOF_DETECTED
     
     logging.info("Starting MCP server main loop")
     logging.info("WAITING FOR INITIALIZE MESSAGE FROM CLAUDE...")
@@ -579,7 +612,12 @@ def main_loop():
                     logging.info(f"Retrieved message from queue: {message[:50]}...")
                 except queue.Empty:
                     # If no message, just continue the loop - don't exit
-                    logging.debug("No message in queue, continuing to wait...")
+                    # Even if stdin has EOF, we should stay alive if initialized
+                    if STDIN_EOF_DETECTED and has_initialized:
+                        logging.info("No message in queue, stdin has EOF, but server is initialized - staying alive")
+                    else:
+                        logging.debug("No message in queue, continuing to wait...")
+                    
                     # If we've initialized, wait longer to reduce CPU usage
                     if has_initialized:
                         time.sleep(0.5)
@@ -603,6 +641,9 @@ def main_loop():
                     if '"method":"initialize"' in message:
                         logging.info("CRITICAL: Server initialized - STAYING ALIVE to handle future requests")
                         has_initialized = True
+                        # After initialize, NEVER exit even if stdin is EOF
+                        if STDIN_EOF_DETECTED:
+                            logging.warning("Stdin EOF detected after initialization - IGNORING and staying alive")
                         # Do not exit - continue listening for more messages
                 except Exception as e:
                     logging.error(f"Error processing or sending message: {str(e)}")
@@ -645,6 +686,12 @@ def signal_handler(sig, frame):
     """Handle termination signals"""
     if IGNORE_SIGNALS:
         logging.warning(f"Received signal {sig} but ignoring during critical operation")
+        return
+    
+    # DO NOT exit if we're initialized - this is critical!
+    global SERVER_STATE
+    if SERVER_STATE == "initialized":
+        logging.warning(f"Received signal {sig} but server is initialized - IGNORING signal")
         return
         
     logging.info(f"Received signal {sig}, shutting down...")
