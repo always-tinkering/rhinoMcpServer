@@ -15,6 +15,7 @@ import logging
 import signal
 import threading
 import traceback
+import queue
 from datetime import datetime
 from threading import Thread, Lock, Event
 
@@ -43,6 +44,8 @@ IGNORE_SIGNALS = False  # Flag to temporarily ignore signals during critical sec
 SERVER_STATE = "waiting"  # States: waiting, initialized, processing
 CONNECTION_EVENT = Event()  # Event to signal when a connection is made
 RECONNECT_TIMEOUT = 60.0  # Wait up to 60 seconds for reconnection before checking status
+MESSAGE_QUEUE = queue.Queue()  # Queue for messages between threads
+NEW_MESSAGE_EVENT = Event()  # Event to signal when a new message is available
 
 # Create a PID file to track this process
 pid_file = os.path.join(log_dir, "standalone_server.pid")
@@ -80,16 +83,34 @@ def send_json_response(data):
         logging.error(f"Stack trace: {traceback.format_exc()}")
         logging.error(f"Problematic data: {str(data)[:200]}")
 
-def receive_message(timeout=None):
+def receive_message(timeout=None, from_queue=False):
     """
     Read a message from stdin (Claude) with optional timeout
     
     Args:
         timeout: If provided, wait up to this many seconds for input before returning None
+        from_queue: If True, read from the message queue instead of stdin
     
     Returns:
         The message string or None if EOF or timeout
     """
+    if from_queue:
+        # Try to get a message from the queue
+        try:
+            if timeout is not None:
+                # Use timeout if provided
+                try:
+                    return MESSAGE_QUEUE.get(block=True, timeout=timeout)
+                except queue.Empty:
+                    return None
+            else:
+                # No timeout, will block indefinitely
+                return MESSAGE_QUEUE.get(block=True)
+        except Exception as e:
+            logging.error(f"Error reading from message queue: {str(e)}")
+            return None
+    
+    # Standard read from stdin
     try:
         # If timeout is requested, use a separate thread for reading
         if timeout is not None:
@@ -421,7 +442,8 @@ def connection_monitor():
 def persist_stdin():
     """
     Keeps stdin open even when there's no active client connection.
-    This is crucial for the MCP protocol.
+    This is crucial for the MCP protocol. This thread reads messages from stdin
+    and puts them into a queue for the main thread to process.
     """
     global EXIT_FLAG
     
@@ -429,16 +451,35 @@ def persist_stdin():
     
     while not EXIT_FLAG:
         try:
-            # Try to read any inputs that might be available, but don't block for long
-            # This helps keep the stdin stream from being closed by the OS
-            message = receive_message(timeout=1.0)
+            # Try to read any inputs that might be available
+            # Unlike before, we don't use a timeout here because we want to block
+            # waiting for input
+            line = sys.stdin.buffer.readline()
+            if not line:
+                logging.warning("EOF detected on stdin in persistence thread - client disconnected")
+                time.sleep(0.5)  # Short sleep to prevent tight loops on EOF
+                continue
+                
+            # Decode the bytes to string
+            line_str = line.decode('utf-8').strip()
+            if not line_str:
+                logging.warning("Empty line received on stdin in persistence thread")
+                continue
+                
+            # Log the message
+            if '"method":"initialize"' in line_str:
+                logging.info(f"STDIN THREAD RECEIVED INITIALIZE MESSAGE: {line_str}")
+            else:
+                logging.debug(f"STDIN thread received message: {line_str[:100]}...")
+                
+            # Put the message in the queue for the main thread to process
+            MESSAGE_QUEUE.put(line_str)
+            logging.info("Message added to processing queue")
+            NEW_MESSAGE_EVENT.set()  # Signal that a new message is available
             
-            if message:
-                logging.debug("Received input in stdin persistence thread")
-                # We don't want to process it here, just make sure stdin stays open
-                time.sleep(0.1)
         except Exception as e:
             logging.error(f"Error in persist_stdin: {str(e)}")
+            logging.error(f"Stack trace: {traceback.format_exc()}")
             time.sleep(1)
     
     logging.info("Stdin persistence thread exiting")
@@ -499,8 +540,24 @@ def main_loop():
             
             logging.debug(f"Main loop waiting for message (state: {SERVER_STATE})")
             
-            # Read message from stdin (with a timeout to prevent blocking forever)
-            message = receive_message(timeout=1.0)
+            # First, check if there's a message in the queue
+            # We'll wait for a very short time to avoid tight loops
+            message = None
+            try:
+                message = MESSAGE_QUEUE.get(block=False)
+                logging.info(f"Retrieved message from queue: {message[:50]}...")
+            except queue.Empty:
+                # If no message in queue, wait with a short timeout
+                NEW_MESSAGE_EVENT.wait(0.1)
+                NEW_MESSAGE_EVENT.clear()
+                
+                # If still nothing, fall back to normal stdin reading with a timeout
+                if MESSAGE_QUEUE.empty():
+                    # Read message from stdin with a timeout
+                    logging.debug("No message in queue, checking stdin...")
+                    message = None  # Don't try to read stdin, the persistence thread does that
+                else:
+                    continue  # Loop back and try the queue again
             
             # If no message, just check if we need to exit and continue
             if message is None:
