@@ -41,7 +41,7 @@ trap cleanup EXIT INT TERM
 log "==== WRAPPER SCRIPT STARTING ===="
 log "Script directory: $SCRIPT_DIR"
 log "Server script: $SERVER_SCRIPT"
-log "Python version: $(python3 --version)"
+log "Python version: $(python3 --version 2>&1)"
 
 # Verify server script exists and is executable
 if [ ! -f "$SERVER_SCRIPT" ]; then
@@ -68,7 +68,8 @@ log "Starting Python server..."
 while true; do
     # Start the server in the background with absolute path
     cd "$SCRIPT_DIR"  # Change to script directory
-    "$SERVER_SCRIPT" 2>&1 &
+    # Redirect stderr to our logging function, keep stdout clean for JSON
+    "$SERVER_SCRIPT" 2> >(while IFS= read -r line; do log "$line"; done) &
     SERVER_PID=$!
     
     # Wait for server process
