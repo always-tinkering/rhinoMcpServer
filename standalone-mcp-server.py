@@ -16,18 +16,19 @@ import signal
 from datetime import datetime
 from threading import Thread, Lock
 
-# Configure logging
+# Configure logging - ONLY to file and stderr, NOT stdout
 log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 os.makedirs(log_dir, exist_ok=True)
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 log_file = os.path.join(log_dir, f"standalone_server_{timestamp}.log")
 
+# Important: Only log to file and stderr, NEVER to stdout
 logging.basicConfig(
     level=logging.DEBUG,
     format='[%(asctime)s] [%(levelname)s] %(message)s',
     handlers=[
         logging.FileHandler(log_file),
-        logging.StreamHandler(sys.stderr)
+        logging.StreamHandler(sys.stderr)  # Only stderr, never stdout
     ]
 )
 
@@ -53,9 +54,10 @@ def send_json_response(data):
         else:
             json_str = json.dumps(data)  # Convert dict to string
         
-        # Write to stdout without any extra characters
-        sys.stdout.write(json_str + "\n")
-        sys.stdout.flush()
+        # Write directly to stdout buffer without any extra characters
+        # This is critical for proper JSON parsing by Claude
+        sys.stdout.buffer.write((json_str + "\n").encode('utf-8'))
+        sys.stdout.buffer.flush()
         logging.debug(f"Sent JSON: {json_str[:100]}...")
     except Exception as e:
         logging.error(f"Error sending JSON: {str(e)}")
@@ -64,15 +66,18 @@ def send_json_response(data):
 def receive_message():
     """Read a message from stdin (Claude)"""
     try:
-        line = sys.stdin.readline()
+        # Read raw bytes from stdin to avoid any potential encoding issues
+        line = sys.stdin.buffer.readline()
         if not line:
             return None  # EOF
-        line = line.strip()
-        if not line:
+        
+        # Decode the bytes to string
+        line_str = line.decode('utf-8').strip()
+        if not line_str:
             return None  # Empty line
         
-        logging.debug(f"Received message: {line[:100]}...")
-        return line
+        logging.debug(f"Received message: {line_str[:100]}...")
+        return line_str
     except Exception as e:
         logging.error(f"Error reading message: {str(e)}")
         return None
@@ -339,6 +344,9 @@ def cleanup():
         logging.error(f"Error removing PID file: {str(e)}")
 
 if __name__ == "__main__":
+    # Make sure stdout is clean at startup
+    sys.stdout.flush()
+    
     # Set up signal handlers - but make them more resilient
     # SIGTERM (15) - termination request
     signal.signal(signal.SIGTERM, signal_handler)
@@ -350,6 +358,7 @@ if __name__ == "__main__":
     # Get the current working directory
     working_dir = os.getcwd()
     
+    # Log to stderr only
     logging.info("=== Standalone MCP Server Starting ===")
     logging.info(f"Process ID: {os.getpid()}")
     logging.info(f"Python version: {sys.version}")
