@@ -389,6 +389,15 @@ def process_message(message):
             return handle_tool_call(request)
         elif method == "shutdown":
             return handle_shutdown(request)
+        # Handle the notifications/cancelled message that might be causing premature exits
+        elif method == "notifications/cancelled":
+            logging.info(f"Received cancellation notification, ignoring: {message[:100]}...")
+            # Return a simple acknowledgment but don't exit
+            return {
+                "jsonrpc": "2.0",
+                "id": request.get("id", 0),
+                "result": {"acknowledged": True}
+            }
         else:
             logging.warning(f"Unknown method: {method}")
             return {
@@ -445,7 +454,7 @@ def persist_stdin():
     This is crucial for the MCP protocol. This thread reads messages from stdin
     and puts them into a queue for the main thread to process.
     """
-    global EXIT_FLAG
+    global EXIT_FLAG, SERVER_STATE
     
     logging.info("Stdin persistence thread started")
     
@@ -457,6 +466,11 @@ def persist_stdin():
             line = sys.stdin.buffer.readline()
             if not line:
                 logging.warning("EOF detected on stdin in persistence thread - client disconnected")
+                # Don't exit if we're initialized - just wait for reconnection
+                if SERVER_STATE == "initialized":
+                    logging.info("Server is in initialized state - waiting for reconnection")
+                    time.sleep(1.0)
+                    continue
                 time.sleep(0.5)  # Short sleep to prevent tight loops on EOF
                 continue
                 
@@ -481,6 +495,11 @@ def persist_stdin():
             logging.error(f"Error in persist_stdin: {str(e)}")
             logging.error(f"Stack trace: {traceback.format_exc()}")
             time.sleep(1)
+            
+            # Don't exit if we're in initialized state - just recover and continue
+            if SERVER_STATE == "initialized":
+                logging.info("Recovering stdin thread in initialized state")
+                continue
     
     logging.info("Stdin persistence thread exiting")
 
@@ -505,7 +524,7 @@ def keepalive_ping():
 
 def main_loop():
     """Main server loop to process messages"""
-    global SERVER_STATE
+    global SERVER_STATE, EXIT_FLAG
     
     logging.info("Starting MCP server main loop")
     logging.info("WAITING FOR INITIALIZE MESSAGE FROM CLAUDE...")
@@ -515,89 +534,110 @@ def main_loop():
     sys.stdout.buffer.flush()
     
     # Create connection monitoring thread
-    monitor_thread = Thread(target=connection_monitor, daemon=True)
+    # IMPORTANT: Make these non-daemon threads so they don't terminate automatically
+    monitor_thread = Thread(target=connection_monitor, daemon=False, name="monitor_thread")
     monitor_thread.start()
     
     # Create stdin persistence thread 
-    stdin_thread = Thread(target=persist_stdin, daemon=True)
+    stdin_thread = Thread(target=persist_stdin, daemon=False, name="stdin_thread")
     stdin_thread.start()
     
     # Create a keep-alive thread to handle client reconnections
-    keepalive_thread = Thread(target=keepalive_ping, daemon=True)
+    keepalive_thread = Thread(target=keepalive_ping, daemon=False, name="keepalive_thread")
     keepalive_thread.start()
+    
+    # Keep references to the threads for proper cleanup
+    threads = [monitor_thread, stdin_thread, keepalive_thread]
     
     # Flag to track whether we've printed the reconnection message
     reconnection_message_printed = False
     
-    while not EXIT_FLAG:
-        try:
-            # If we're in initialized state, let's notify about waiting for reconnection
-            if SERVER_STATE == "initialized" and not reconnection_message_printed:
-                logging.info("===== IMPORTANT: Server is now in initialized state =====")
-                logging.info("The server will wait for Claude to reconnect. This is NORMAL behavior.")
-                logging.info("DO NOT restart the server manually when Claude disconnects after initialization.")
-                reconnection_message_printed = True
-            
-            logging.debug(f"Main loop waiting for message (state: {SERVER_STATE})")
-            
-            # First, check if there's a message in the queue
-            # We'll wait for a very short time to avoid tight loops
-            message = None
+    # CRITICAL: Add a flag to indicate whether we've seen an initialize method
+    # This helps prevent premature exits
+    has_initialized = False
+    
+    try:
+        while not EXIT_FLAG:
             try:
-                message = MESSAGE_QUEUE.get(block=False)
-                logging.info(f"Retrieved message from queue: {message[:50]}...")
-            except queue.Empty:
-                # If no message in queue, wait with a short timeout
-                NEW_MESSAGE_EVENT.wait(0.1)
-                NEW_MESSAGE_EVENT.clear()
+                # If we're in initialized state, let's notify about waiting for reconnection
+                if SERVER_STATE == "initialized" and not reconnection_message_printed:
+                    logging.info("===== IMPORTANT: Server is now in initialized state =====")
+                    logging.info("The server will wait for Claude to reconnect. This is NORMAL behavior.")
+                    logging.info("DO NOT restart the server manually when Claude disconnects after initialization.")
+                    reconnection_message_printed = True
+                    has_initialized = True  # Mark that we've initialized
                 
-                # If still nothing, fall back to normal stdin reading with a timeout
-                if MESSAGE_QUEUE.empty():
-                    # Read message from stdin with a timeout
-                    logging.debug("No message in queue, checking stdin...")
-                    message = None  # Don't try to read stdin, the persistence thread does that
-                else:
-                    continue  # Loop back and try the queue again
-            
-            # If no message, just check if we need to exit and continue
-            if message is None:
-                if EXIT_FLAG:
-                    break
-                    
-                # Reset reconnection message if we get a new connection after waiting
-                if reconnection_message_printed and SERVER_STATE == "waiting":
-                    reconnection_message_printed = False
-                    
-                continue
-            
-            # Log that we received a message  
-            logging.info(f"Processing message: {message[:50]}...")
+                logging.debug(f"Main loop waiting for message (state: {SERVER_STATE})")
                 
-            # Process message and get response
-            try:
-                response = process_message(message)
-                
-                # Validate the response is a proper dictionary before sending
-                if not isinstance(response, (dict, str)):
-                    logging.error(f"Invalid response type: {type(response)}")
+                # First, check if there's a message in the queue
+                # We'll wait for a very short time to avoid tight loops
+                message = None
+                try:
+                    # Increase timeout if we're already initialized to reduce CPU usage
+                    queue_timeout = 1.0 if has_initialized else 0.1
+                    message = MESSAGE_QUEUE.get(block=True, timeout=queue_timeout)
+                    logging.info(f"Retrieved message from queue: {message[:50]}...")
+                except queue.Empty:
+                    # If no message, just continue the loop - don't exit
+                    logging.debug("No message in queue, continuing to wait...")
+                    # If we've initialized, wait longer to reduce CPU usage
+                    if has_initialized:
+                        time.sleep(0.5)
                     continue
+                
+                # Process message and get response
+                try:
+                    response = process_message(message)
                     
-                # Send response
-                logging.info("Sending response to Claude...")
-                send_json_response(response)
-                logging.info("Response sent successfully")
+                    # Validate the response is a proper dictionary before sending
+                    if not isinstance(response, (dict, str)):
+                        logging.error(f"Invalid response type: {type(response)}")
+                        continue
+                        
+                    # Send response
+                    logging.info("Sending response to Claude...")
+                    send_json_response(response)
+                    logging.info("Response sent successfully")
+                    
+                    # CRUCIAL: After sending an initialize response, make sure we stay alive
+                    if '"method":"initialize"' in message:
+                        logging.info("CRITICAL: Server initialized - STAYING ALIVE to handle future requests")
+                        has_initialized = True
+                        # Do not exit - continue listening for more messages
+                except Exception as e:
+                    logging.error(f"Error processing or sending message: {str(e)}")
+                    logging.error(f"Stack trace: {traceback.format_exc()}")
+                    # Don't crash the server on individual message processing errors
+                
+                # VITAL: If we're initialized, make sure we don't exit
+                if has_initialized:
+                    logging.debug("Server is initialized - continuing to listen for requests")
+                
+                # Small delay to prevent tight loops
+                time.sleep(0.01)
+                
             except Exception as e:
-                logging.error(f"Error processing or sending message: {str(e)}")
+                logging.error(f"Error in main loop: {str(e)}")
                 logging.error(f"Stack trace: {traceback.format_exc()}")
-                # Don't crash the server on individual message processing errors
-            
-            # Small delay to prevent tight loops
-            time.sleep(0.01)
-            
-        except Exception as e:
-            logging.error(f"Error in main loop: {str(e)}")
-            logging.error(f"Stack trace: {traceback.format_exc()}")
-            time.sleep(1)  # Prevent tight error loops
+                time.sleep(1)  # Prevent tight error loops
+                
+                # IMPORTANT: Don't exit if we've initialized, just recover and continue
+                if has_initialized:
+                    logging.info("Recovering from error in initialized state - continuing...")
+                    continue
+    finally:
+        # Set EXIT_FLAG to make sure all threads know to exit
+        EXIT_FLAG = True
+        
+        # Give threads time to exit gracefully
+        logging.info("Waiting for threads to exit gracefully...")
+        
+        # Wait for threads to terminate with a timeout
+        # This prevents hanging if threads aren't responding
+        for thread in threads:
+            if thread.is_alive():
+                thread.join(timeout=2.0)
+                logging.info(f"Thread {thread.name} completed status: {not thread.is_alive()}")
     
     logging.info("Main loop exited")
 
@@ -654,6 +694,15 @@ if __name__ == "__main__":
             os.chdir(script_dir)
             logging.info(f"Changed working directory to: {script_dir}")
         
+        # Initialize signal handlers
+        logging.info("Registering signal handlers")
+        
+        # Make sure the signal handlers are correctly set
+        for sig_name in ('SIGINT', 'SIGTERM', 'SIGHUP'):
+            sig_num = getattr(signal, sig_name)
+            prev_handler = signal.getsignal(sig_num)
+            logging.info(f"Setting handler for {sig_name}, previous handler: {prev_handler}")
+            
         # Start the main processing loop
         main_loop()
     except KeyboardInterrupt:
@@ -662,5 +711,12 @@ if __name__ == "__main__":
         logging.error(f"Fatal error: {str(e)}")
         logging.error(f"Stack trace: {traceback.format_exc()}")
     finally:
+        # Make sure EXIT_FLAG is set so any remaining threads know to exit
+        EXIT_FLAG = True
+        logging.info("Setting EXIT_FLAG to ensure thread termination")
+        
+        # Sleep briefly to allow threads to see the exit flag
+        time.sleep(0.5)
+        
         cleanup()
         logging.info("=== Server Shutdown Complete ===") 
