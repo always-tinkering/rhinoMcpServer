@@ -1,131 +1,131 @@
+# RhinoMCP Server
 
-# RhinoMCP - Rhino Model Context Protocol Integration
-
-RhinoMCP connects Rhino to Claude AI through the Model Context Protocol (MCP), allowing Claude to directly interact with and control Rhino. This integration enables prompt assisted 3D modeling, architectural design, and geometry manipulation.
+A minimal Model Context Protocol (MCP) server that exposes Rhino 3D's Python scripting capabilities to AI systems. This server enables AI agents to generate, manipulate, and analyze 3D models in Rhino through a standardized protocol with proper user consent.
 
 ## Features
 
-* **Two-way communication**: Connect Claude AI to Rhino through a socket-based server
-* **Geometry manipulation**: Create, modify, and delete 3D objects in Rhino
-* **Material control**: Apply and modify materials and colors
-* **Scene inspection**: Get detailed information about the current Rhino scene
-* **Code execution**: Run arbitrary Python code in Rhino from Claude
+- **Scene Context**: Get information about all objects in the current Rhino document
+- **Object Creation**: Create basic 3D geometry (currently supports spheres)
+- **User Consent**: All operations require explicit user approval
+- **Error Handling**: Robust error handling for Rhino operations
+- **Security**: Following MCP security guidelines for user consent
 
-## Components
+## Requirements
 
-The system consists of two main components:
-
-1. **Rhino Plugin (`plugin.py`)**: A Rhino plugin that creates a socket server within Rhino to receive and execute commands
-2. **MCP Server (`src/rhino_mcp/server.py`)**: A Python server that implements the Model Context Protocol and connects to the Rhino plugin
+- Rhino 8 with Python 3.8+
+- Python packages specified in `requirements.txt`
 
 ## Installation
 
-### Prerequisites
-
-* Rhino 7 or newer
-* Python 3.10 or newer
-
-### Quick Start
-
-Run rhino-mcp without installing it permanently (uvx will automatically download and run the package):
+1. Clone this repository or download the files
+2. Install the required dependencies:
 
 ```bash
-uvx rhino-mcp
+pip install -r requirements.txt
 ```
 
-If you're on Mac, please install uv as
-
-```bash
-brew install uv
-```
-
-Otherwise installation instructions are on their website: [Install uv](https://github.com/astral-sh/uv)
-
-### Claude for Desktop Integration
-
-Update your `claude_desktop_config.json` (located in `~/Library/Application\ Support/Claude/claude_desktop_config.json` on macOS and `%APPDATA%/Claude/claude_desktop_config.json` on Windows) to include the following:
-
-```json
-{
-    "mcpServers": {
-        "rhino": {
-            "command": "uvx",
-            "args": [
-                "rhino-mcp"
-            ]
-        }
-    }
-}
-```
-
-### Installing the Rhino Plugin
-
-1. Download the `plugin.py` file from this repo
-2. Open Rhino
-3. Go to Tools > PythonScript > Edit
-4. Place the plugin in your Rhino Python scripts folder
-5. Restart Rhino
+3. Make sure Rhino 8 is installed with Python support
 
 ## Usage
 
-### Starting the Connection
+### Running the Server
 
-1. In Rhino, type `StartMCPServer` in the command line
-2. Set the port number (default: 9877)
-3. Make sure the MCP server is running in your terminal
+The server is designed to be started from within Rhino's Python environment:
 
-### Using with Claude
+1. Open Rhino 8
+2. Run the Python script command
+3. Navigate to and run `rhinomcp_server.py`
 
-Once connected, Claude can interact with Rhino using the following capabilities:
+You can also run the server from a Python environment with Rhino libraries accessible:
 
-#### Tools
+```bash
+python rhinomcp_server.py
+```
 
-* `get_scene_info` - Gets scene information
-* `get_object_info` - Gets detailed information for a specific object in the scene
-* `create_primitive` - Create basic primitive objects with optional color
-* `set_object_property` - Set a single property of an object
-* `create_object` - Create a new object with detailed parameters
-* `modify_object` - Modify an existing object's properties
-* `delete_object` - Remove an object from the scene
-* `set_material` - Apply or create materials for objects
-* `execute_rhino_code` - Run any Python code in Rhino
+### Integration with AI Systems
 
-### Example Commands
+This MCP server uses the STDIO transport protocol, which means it can be easily integrated with AI systems that support the Model Context Protocol.
 
-Here are some examples of what you can ask Claude to do:
+For Claude AI integration, add the following to your configuration:
 
-* "Create a parametric facade with a grid of windows"
-* "Generate a spiral staircase with custom parameters"
-* "Create a site plan from imported GIS data"
-* "Apply materials to selected surfaces"
-* "Create a section cut through the model"
-* "Set up standard architectural views"
-* "Export the model for visualization"
+```json
+{
+  "mcpServers": {
+    "rhino": {
+      "command": "python",
+      "args": ["path/to/rhinomcp_server.py"]
+    }
+  }
+}
+```
+
+## Available Tools
+
+### Scene Context
+
+To get information about all objects in the current Rhino document:
+
+```python
+# Example of requesting scene context resource
+resource = await mcp.get_resource("scene")
+```
+
+The response includes:
+- Object count
+- List of all objects with their properties (ID, type, layer, color, position, bounding box)
+- Active view
+- Available layers
+
+### Create Sphere
+
+To create a sphere in the Rhino document:
+
+```python
+# Example of calling the create_sphere tool
+result = await mcp.call_tool("create_sphere", {
+    "center_x": 0.0,
+    "center_y": 0.0,
+    "center_z": 0.0,
+    "radius": 5.0,
+    "color": "#FF0000"  # Optional
+})
+```
+
+Each creation operation will prompt the user for consent via a dialog in Rhino.
+
+## Security Considerations
+
+- All operations that modify the Rhino document require explicit user consent
+- Operations are logged for auditing
+- The server runs with the same permissions as the Rhino process
+
+## Error Handling
+
+The server provides detailed error messages for failed operations, including:
+- Invalid parameters
+- Rhino operation failures
+- User consent denials
+
+## Extending the Server
+
+To add new tools or resources:
+
+1. Create new Pydantic models for parameters and results
+2. Add helper functions for Rhino operations
+3. Register new resource handlers with `@mcp.resource_handler()`
+4. Register new tools with `@mcp.tool()`
 
 ## Troubleshooting
 
-* **Connection issues**: Make sure both the Rhino plugin server and the MCP server are running
-* **Command failures**: Check the command line in Rhino for error messages
-* **Timeout errors**: Try simplifying your requests or breaking them into smaller steps
+- **Import Errors**: Make sure you're running the server within Rhino's Python environment
+- **Connection Issues**: Check that the STDIO channels are properly connected
+- **Operation Failures**: Check the server logs for detailed error messages
 
-## Technical Details
+## License
 
-### Communication Protocol
+This project is available under the MIT License.
 
-The system uses a simple JSON-based protocol over TCP sockets:
+## Acknowledgements
 
-* **Commands** are sent as JSON objects with a `type` and optional `params`
-* **Responses** are JSON objects with a `status` and `result` or `message`
-
-## Limitations & Security Considerations
-
-* The `execute_rhino_code` tool allows running arbitrary Python code in Rhino, which can be powerful but potentially dangerous. Use with caution in production environments. ALWAYS save your work before using it.
-* Complex operations might need to be broken down into smaller steps
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## Disclaimer
-
-This is a third-party integration and not made by Rhino. 
+- Rhino 3D and McNeel for the Rhino API
+- The Model Context Protocol (MCP) team for the protocol specification 
