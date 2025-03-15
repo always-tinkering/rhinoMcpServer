@@ -20,12 +20,9 @@ LOG_FILE="logs/wrapper_${TIMESTAMP}.log"
 # Make sure Python script is executable
 chmod +x ./standalone-mcp-server.py
 
-# Output to log file and terminal
-exec > >(tee -a "$LOG_FILE") 2>&1
-
 # Log with timestamp
 log() {
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*"
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE" >&2
 }
 
 # Function to clean up when the script exits
@@ -80,10 +77,15 @@ start_server() {
     export PYTHONUNBUFFERED=1
     export PYTHONIOENCODING=utf-8
     
-    # Start the Python server with clean stdio
-    # DO NOT background this process - Claude Desktop needs direct access to it
+    # Clear any existing stdout/stderr buffers
+    log "Clearing I/O buffers"
+    
+    # Start the Python server with clean stdio, capturing stderr for logging
+    # but keeping stdout clean for JSON communication
     log "Executing ./standalone-mcp-server.py with clean stdio"
-    ./standalone-mcp-server.py
+    
+    # Redirect stderr to the log file but keep stdout clean for JSON
+    ./standalone-mcp-server.py 2>> "$LOG_FILE"
     
     # This is reached when the Python server exits
     RESULT=$?

@@ -52,20 +52,32 @@ with open(pid_file, "w") as f:
 def send_json_response(data):
     """Send a JSON response to stdout (Claude)"""
     try:
-        # Ensure it's valid JSON first
+        # Ensure we're sending a valid JSON object
         if isinstance(data, str):
-            json_obj = json.loads(data)  # Parse to validate
-            json_str = data  # Use the original string
+            try:
+                # Parse to validate and re-serialize to ensure clean JSON
+                json_obj = json.loads(data)
+                json_str = json.dumps(json_obj)
+            except json.JSONDecodeError as e:
+                logging.error(f"Invalid JSON string provided: {str(e)}")
+                logging.error(f"Problematic data: {str(data)[:200]}")
+                return
         else:
-            json_str = json.dumps(data)  # Convert dict to string
+            # Convert dict to a clean JSON string
+            json_str = json.dumps(data)
         
-        # Write directly to stdout buffer without any extra characters
-        # This is critical for proper JSON parsing by Claude
-        sys.stdout.buffer.write((json_str + "\n").encode('utf-8'))
+        # Ensure stdout is clean before writing
+        sys.stdout.flush()
+        
+        # Write as bytes with just the JSON string and a newline, nothing else
+        sys.stdout.buffer.write(json_str.encode('utf-8'))
+        sys.stdout.buffer.write(b'\n')
         sys.stdout.buffer.flush()
+        
         logging.debug(f"Sent JSON: {json_str[:100]}...")
     except Exception as e:
         logging.error(f"Error sending JSON: {str(e)}")
+        logging.error(f"Stack trace: {traceback.format_exc()}")
         logging.error(f"Problematic data: {str(data)[:200]}")
 
 def receive_message(timeout=None):
@@ -244,6 +256,11 @@ def handle_initialize():
         # Mark server as initialized after successful response
         SERVER_STATE = "initialized"
         logging.info("Server initialized successfully - will stay alive for reconnections")
+        
+        # Convert all Python booleans to JSON booleans
+        json_str = json.dumps(response)
+        response = json.loads(json_str)
+        
         return response
     finally:
         # Reset signal flag
@@ -422,6 +439,10 @@ def main_loop():
     
     logging.info("Starting MCP server main loop")
     
+    # Ensure stdout is completely clean at startup
+    sys.stdout.flush()
+    sys.stdout.buffer.flush()
+    
     # Create connection monitoring thread
     monitor_thread = Thread(target=connection_monitor, daemon=True)
     monitor_thread.start()
@@ -461,12 +482,22 @@ def main_loop():
                     reconnection_message_printed = False
                     
                 continue
-            
-            # Process message
-            response = process_message(message)
-            
-            # Send response
-            send_json_response(response)
+                
+            # Process message and get response
+            try:
+                response = process_message(message)
+                
+                # Validate the response is a proper dictionary before sending
+                if not isinstance(response, (dict, str)):
+                    logging.error(f"Invalid response type: {type(response)}")
+                    continue
+                    
+                # Send response
+                send_json_response(response)
+            except Exception as e:
+                logging.error(f"Error processing or sending message: {str(e)}")
+                logging.error(f"Stack trace: {traceback.format_exc()}")
+                # Don't crash the server on individual message processing errors
             
             # Small delay to prevent tight loops
             time.sleep(0.01)
