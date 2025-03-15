@@ -13,8 +13,10 @@ import sys
 import time
 import logging
 import signal
+import threading
+import traceback
 from datetime import datetime
-from threading import Thread, Lock
+from threading import Thread, Lock, Event
 
 # Configure logging - ONLY to file and stderr, NOT stdout
 log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
@@ -38,6 +40,9 @@ SERVER_LOCK = Lock()
 RHINO_PORT = 9876
 EXIT_FLAG = False
 IGNORE_SIGNALS = False  # Flag to temporarily ignore signals during critical sections
+SERVER_STATE = "waiting"  # States: waiting, initialized, processing
+CONNECTION_EVENT = Event()  # Event to signal when a connection is made
+RECONNECT_TIMEOUT = 60.0  # Wait up to 60 seconds for reconnection before checking status
 
 # Create a PID file to track this process
 pid_file = os.path.join(log_dir, "standalone_server.pid")
@@ -63,14 +68,55 @@ def send_json_response(data):
         logging.error(f"Error sending JSON: {str(e)}")
         logging.error(f"Problematic data: {str(data)[:200]}")
 
-def receive_message():
-    """Read a message from stdin (Claude)"""
+def receive_message(timeout=None):
+    """
+    Read a message from stdin (Claude) with optional timeout
+    
+    Args:
+        timeout: If provided, wait up to this many seconds for input before returning None
+    
+    Returns:
+        The message string or None if EOF or timeout
+    """
     try:
-        # Read raw bytes from stdin to avoid any potential encoding issues
+        # If timeout is requested, use a separate thread for reading
+        if timeout is not None:
+            result = [None]
+            
+            def read_input():
+                try:
+                    line = sys.stdin.buffer.readline()
+                    if not line:
+                        result[0] = None  # EOF
+                        return
+                    
+                    line_str = line.decode('utf-8').strip()
+                    if not line_str:
+                        result[0] = None  # Empty line
+                    else:
+                        result[0] = line_str
+                except Exception as e:
+                    logging.error(f"Error in read_input thread: {str(e)}")
+                    result[0] = None
+                finally:
+                    CONNECTION_EVENT.set()  # Signal that reading is done
+            
+            # Create and start the thread
+            read_thread = Thread(target=read_input, daemon=True)
+            CONNECTION_EVENT.clear()
+            read_thread.start()
+            
+            # Wait for the thread to complete or timeout
+            CONNECTION_EVENT.wait(timeout)
+            
+            if result[0] is None and not CONNECTION_EVENT.is_set():
+                logging.debug(f"Receive timeout after {timeout} seconds")
+            
+            return result[0]
+        
+        # Standard synchronous read if no timeout
         line = sys.stdin.buffer.readline()
         if not line:
-            # This is an EOF, but we should not exit the server!
-            # Claude Desktop disconnects after initialization, which is expected
             logging.info("Detected EOF on stdin - client disconnected, waiting for reconnection")
             return None  # EOF
         
@@ -83,6 +129,7 @@ def receive_message():
         return line_str
     except Exception as e:
         logging.error(f"Error reading message: {str(e)}")
+        logging.error(f"Stack trace: {traceback.format_exc()}")
         return None
 
 def send_to_rhino(message):
@@ -118,7 +165,7 @@ def handle_initialize():
     logging.info("Processing initialize request")
     
     # Set flag to ignore signals during initialization
-    global IGNORE_SIGNALS
+    global IGNORE_SIGNALS, SERVER_STATE
     IGNORE_SIGNALS = True
     
     try:
@@ -193,6 +240,9 @@ def handle_initialize():
                 }
             }
         }
+        
+        # Mark server as initialized after successful response
+        SERVER_STATE = "initialized"
         return response
     finally:
         # Reset signal flag
@@ -200,6 +250,9 @@ def handle_initialize():
 
 def handle_tool_call(request):
     """Handle a tool call request and forward to Rhino"""
+    global SERVER_STATE
+    SERVER_STATE = "processing"
+    
     tool_name = request["params"]["name"]
     parameters = request["params"]["parameters"]
     request_id = request.get("id", 0)
@@ -237,6 +290,7 @@ def handle_tool_call(request):
         }
     }
     
+    SERVER_STATE = "initialized"  # Return to initialized state after processing
     return response
 
 def handle_shutdown(request):
@@ -279,6 +333,7 @@ def process_message(message):
             }
     except Exception as e:
         logging.error(f"Error processing message: {str(e)}")
+        logging.error(f"Stack trace: {traceback.format_exc()}")
         return {
             "jsonrpc": "2.0",
             "id": 0,
@@ -288,48 +343,103 @@ def process_message(message):
             }
         }
 
+def connection_monitor():
+    """
+    Monitor thread that prevents the server from exiting when clients disconnect.
+    Checks server health and performs periodic actions.
+    """
+    global EXIT_FLAG, SERVER_STATE
+    
+    logging.info("Connection monitor started")
+    
+    while not EXIT_FLAG:
+        try:
+            # Log server state periodically
+            logging.debug(f"Server state: {SERVER_STATE}")
+            
+            # Check if Rhino is still accessible
+            if SERVER_STATE == "initialized":
+                # Perform any needed maintenance here
+                pass
+                
+            # Sleep to prevent tight loop
+            time.sleep(5)
+        except Exception as e:
+            logging.error(f"Error in connection monitor: {str(e)}")
+            logging.error(f"Stack trace: {traceback.format_exc()}")
+            time.sleep(10)  # Longer sleep on error
+    
+    logging.info("Connection monitor exiting")
+
+def persist_stdin():
+    """
+    Keeps stdin open even when there's no active client connection.
+    This is crucial for the MCP protocol.
+    """
+    global EXIT_FLAG
+    
+    logging.info("Stdin persistence thread started")
+    
+    while not EXIT_FLAG:
+        try:
+            # Try to read any inputs that might be available, but don't block for long
+            # This helps keep the stdin stream from being closed by the OS
+            message = receive_message(timeout=1.0)
+            
+            if message:
+                logging.debug("Received input in stdin persistence thread")
+                # We don't want to process it here, just make sure stdin stays open
+                time.sleep(0.1)
+        except Exception as e:
+            logging.error(f"Error in persist_stdin: {str(e)}")
+            time.sleep(1)
+    
+    logging.info("Stdin persistence thread exiting")
+
 def main_loop():
     """Main server loop to process messages"""
+    global SERVER_STATE
+    
     logging.info("Starting MCP server main loop")
+    
+    # Create connection monitoring thread
+    monitor_thread = Thread(target=connection_monitor, daemon=True)
+    monitor_thread.start()
+    
+    # Create stdin persistence thread 
+    stdin_thread = Thread(target=persist_stdin, daemon=True)
+    stdin_thread.start()
     
     # Create a keep-alive thread to handle client reconnections
     keepalive_thread = Thread(target=keepalive_ping, daemon=True)
     keepalive_thread.start()
     
-    # Flag to track initialization status - we need to stay alive after initialization
-    initialization_complete = False
-    
     while not EXIT_FLAG:
         try:
-            # Read message from stdin
-            message = receive_message()
+            logging.debug(f"Main loop waiting for message (state: {SERVER_STATE})")
             
-            # Handle EOF or empty line
+            # Read message from stdin (with a timeout to prevent blocking forever)
+            message = receive_message(timeout=1.0)
+            
+            # If no message, just check if we need to exit and continue
             if message is None:
-                # This is a normal client disconnect
-                if initialization_complete:
-                    logging.info("Client disconnected (expected behavior) - waiting for reconnection")
-                else:
-                    logging.info("Client disconnected before initialization completed")
-                
-                # Don't exit! Just wait for the next connection
-                time.sleep(1)  # Prevent CPU spinning
+                if EXIT_FLAG:
+                    break
                 continue
             
             # Process message
             response = process_message(message)
             
-            # Check if this was an initialization request
-            if isinstance(response, dict) and "result" in response and "serverInfo" in response.get("result", {}):
-                initialization_complete = True
-                logging.info("Initialization completed successfully, server will remain alive for tool calls")
-            
             # Send response
             send_json_response(response)
             
+            # Small delay to prevent tight loops
+            time.sleep(0.01)
+            
         except Exception as e:
             logging.error(f"Error in main loop: {str(e)}")
-            time.sleep(0.1)  # Prevent tight error loops
+            logging.error(f"Stack trace: {traceback.format_exc()}")
+            time.sleep(1)  # Prevent tight error loops
     
     logging.info("Main loop exited")
 
@@ -399,6 +509,7 @@ if __name__ == "__main__":
         logging.info("Keyboard interrupt received, shutting down...")
     except Exception as e:
         logging.error(f"Fatal error: {str(e)}")
+        logging.error(f"Stack trace: {traceback.format_exc()}")
     finally:
         cleanup()
         logging.info("=== Server Shutdown Complete ===") 
