@@ -4,6 +4,10 @@
 # Exit on any error
 set -e
 
+# Get absolute path to the server script
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+SERVER_SCRIPT="$SCRIPT_DIR/standalone-mcp-server.py"
+
 # Function to log messages to stderr (since stdout needs to be clean for JSON)
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >&2
@@ -35,15 +39,21 @@ trap cleanup EXIT INT TERM
 
 # Log script start
 log "==== WRAPPER SCRIPT STARTING ===="
-log "Working directory: $(pwd)"
+log "Script directory: $SCRIPT_DIR"
+log "Server script: $SERVER_SCRIPT"
 log "Python version: $(python3 --version)"
 
 # Verify server script exists and is executable
-if [ ! -x ./standalone-mcp-server.py ]; then
-    chmod +x ./standalone-mcp-server.py 2>/dev/null || true
+if [ ! -f "$SERVER_SCRIPT" ]; then
+    log "Error: Server script not found at $SERVER_SCRIPT"
+    exit 1
 fi
 
-log "Server script found: $(ls -l ./standalone-mcp-server.py)"
+if [ ! -x "$SERVER_SCRIPT" ]; then
+    chmod +x "$SERVER_SCRIPT" 2>/dev/null || true
+fi
+
+log "Server script found: $(ls -l "$SERVER_SCRIPT")"
 
 # Set environment variables for Python I/O handling
 export PYTHONUNBUFFERED=1
@@ -56,8 +66,9 @@ log "Starting Python server..."
 
 # Start the server and keep it running
 while true; do
-    # Start the server in the background
-    ./standalone-mcp-server.py 2>&1 &
+    # Start the server in the background with absolute path
+    cd "$SCRIPT_DIR"  # Change to script directory
+    "$SERVER_SCRIPT" 2>&1 &
     SERVER_PID=$!
     
     # Wait for server process
