@@ -6,6 +6,8 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <RuntimeIdentifier>osx-arm64</RuntimeIdentifier>
+    <TargetFrameworkVersion>8.0.0</TargetFrameworkVersion>
+    <RollForward>LatestMinor</RollForward>
   </PropertyGroup>
 
 </Project>
