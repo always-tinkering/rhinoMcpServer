@@ -243,6 +243,7 @@ def handle_initialize():
         
         # Mark server as initialized after successful response
         SERVER_STATE = "initialized"
+        logging.info("Server initialized successfully - will stay alive for reconnections")
         return response
     finally:
         # Reset signal flag
@@ -396,6 +397,25 @@ def persist_stdin():
     
     logging.info("Stdin persistence thread exiting")
 
+def keepalive_ping():
+    """Thread function to keep the server alive during client reconnections"""
+    global EXIT_FLAG
+    
+    logging.info("Keepalive thread started")
+    
+    while not EXIT_FLAG:
+        try:
+            # Just write a message to logs every 30 seconds to show we're alive
+            logging.debug("Keepalive thread active - server is waiting for requests")
+            
+            # Sleep to prevent tight loop
+            time.sleep(30)
+        except Exception as e:
+            logging.error(f"Error in keepalive thread: {str(e)}")
+            time.sleep(10)  # Longer sleep on error
+    
+    logging.info("Keepalive thread exiting")
+
 def main_loop():
     """Main server loop to process messages"""
     global SERVER_STATE
@@ -414,8 +434,18 @@ def main_loop():
     keepalive_thread = Thread(target=keepalive_ping, daemon=True)
     keepalive_thread.start()
     
+    # Flag to track whether we've printed the reconnection message
+    reconnection_message_printed = False
+    
     while not EXIT_FLAG:
         try:
+            # If we're in initialized state, let's notify about waiting for reconnection
+            if SERVER_STATE == "initialized" and not reconnection_message_printed:
+                logging.info("===== IMPORTANT: Server is now in initialized state =====")
+                logging.info("The server will wait for Claude to reconnect. This is NORMAL behavior.")
+                logging.info("DO NOT restart the server manually when Claude disconnects after initialization.")
+                reconnection_message_printed = True
+            
             logging.debug(f"Main loop waiting for message (state: {SERVER_STATE})")
             
             # Read message from stdin (with a timeout to prevent blocking forever)
@@ -425,6 +455,11 @@ def main_loop():
             if message is None:
                 if EXIT_FLAG:
                     break
+                    
+                # Reset reconnection message if we get a new connection after waiting
+                if reconnection_message_printed and SERVER_STATE == "waiting":
+                    reconnection_message_printed = False
+                    
                 continue
             
             # Process message
@@ -442,13 +477,6 @@ def main_loop():
             time.sleep(1)  # Prevent tight error loops
     
     logging.info("Main loop exited")
-
-def keepalive_ping():
-    """Thread function to keep the server alive during client reconnections"""
-    while not EXIT_FLAG:
-        # Just write a small log message every 30 seconds to show we're alive
-        logging.debug("Keepalive thread active - server is waiting for requests")
-        time.sleep(30)
 
 def signal_handler(sig, frame):
     """Handle termination signals"""

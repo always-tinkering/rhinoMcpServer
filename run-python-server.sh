@@ -4,6 +4,9 @@
 # This script ensures the server maintains a connection with Claude
 # and handles signals properly
 
+# Set script to exit on any error
+set -e
+
 # Set execution directory to script location
 cd "$(dirname "$0")"
 
@@ -13,6 +16,9 @@ mkdir -p logs
 # Get timestamp for log files
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="logs/wrapper_${TIMESTAMP}.log"
+
+# Make sure Python script is executable
+chmod +x ./standalone-mcp-server.py
 
 # Output to log file and terminal
 exec > >(tee -a "$LOG_FILE") 2>&1
@@ -70,10 +76,14 @@ start_server() {
     # Ensure we're in the correct directory
     cd "$(dirname "$0")"
     
+    # Set environment variables to help Python
+    export PYTHONUNBUFFERED=1
+    export PYTHONIOENCODING=utf-8
+    
     # Start the Python server with clean stdio
     # DO NOT background this process - Claude Desktop needs direct access to it
     log "Executing ./standalone-mcp-server.py with clean stdio"
-    PYTHONUNBUFFERED=1 ./standalone-mcp-server.py
+    ./standalone-mcp-server.py
     
     # This is reached when the Python server exits
     RESULT=$?
@@ -98,11 +108,20 @@ start_server() {
     return $RESULT
 }
 
-# Main loop - keep server running
+# Main script execution
 log "==== WRAPPER SCRIPT STARTING ===="
 log "Working directory: $(pwd)"
+log "Python version: $(python3 --version 2>&1)"
 
-# Start the server for the first time
+# Check that we have the server script
+if [ ! -f "./standalone-mcp-server.py" ]; then
+    log "ERROR: standalone-mcp-server.py not found in current directory"
+    exit 1
+fi
+
+log "Server script found: $(ls -la ./standalone-mcp-server.py)"
+
+# Start the server 
 start_server
 
 # Exit with server's status code
