@@ -1,5 +1,0 @@
-/Users/angerman/scratch/rhinoMcpServer/RhinoMcpServer/publish/RhinoMcpServer
-/Users/angerman/scratch/rhinoMcpServer/RhinoMcpServer/publish/RhinoMcpServer.dll
-/Users/angerman/scratch/rhinoMcpServer/RhinoMcpServer/publish/RhinoMcpServer.deps.json
-/Users/angerman/scratch/rhinoMcpServer/RhinoMcpServer/publish/RhinoMcpServer.runtimeconfig.json
-/Users/angerman/scratch/rhinoMcpServer/RhinoMcpServer/publish/RhinoMcpServer.pdb
