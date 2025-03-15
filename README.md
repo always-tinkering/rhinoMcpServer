@@ -1,131 +1,96 @@
-# RhinoMCP Server
+# RhinoMcpServer
 
-A minimal Model Context Protocol (MCP) server that exposes Rhino 3D's Python scripting capabilities to AI systems. This server enables AI agents to generate, manipulate, and analyze 3D models in Rhino through a standardized protocol with proper user consent.
+A Model Context Protocol (MCP) server implementation for Rhino 3D, enabling seamless integration between Claude AI and Rhino.
+
+## Overview
+
+This project allows Claude to control Rhino 3D through Claude Desktop by implementing the Model Context Protocol. It consists of two main components:
+
+1. **RhinoMcpPlugin**: A Rhino plugin (.NET 7.0) that handles commands from Claude within the Rhino environment
+2. **RhinoMcpServer**: A standalone MCP server (.NET 8.0) that bridges Claude Desktop with the Rhino plugin
+
+## Quick Start
+
+1. Start Rhino
+2. Run `./check-rhino-plugin.sh` to verify the plugin connection
+3. Launch Claude Desktop
+4. Start working with Rhino tools in Claude
 
 ## Features
 
-- **Scene Context**: Get information about all objects in the current Rhino document
-- **Object Creation**: Create basic 3D geometry (currently supports spheres)
-- **User Consent**: All operations require explicit user approval
-- **Error Handling**: Robust error handling for Rhino operations
-- **Security**: Following MCP security guidelines for user consent
+- Create and manipulate 3D geometry (spheres, boxes, cylinders)
+- Manage scene objects and layers
+- Bidirectional communication between Claude and Rhino
+- Real-time updates and feedback
 
-## Requirements
+## Detailed Architecture
 
-- Rhino 8 with Python 3.8+
-- Python packages specified in `requirements.txt`
+### RhinoMcpPlugin (Rhino Plugin)
 
-## Installation
+- Targets .NET 7.0 for compatibility with Rhino 8
+- Implements a socket server on port 9876
+- Listens for commands from the MCP server
+- Translates commands into Rhino API calls
+- Returns results back to the MCP server
 
-1. Clone this repository or download the files
-2. Install the required dependencies:
+### RhinoMcpServer (MCP Server)
+
+- Targets .NET 8.0 for modern features and performance
+- Implements the Model Context Protocol
+- Communicates with Claude Desktop through stdin/stdout
+- Forwards tool calls to the RhinoMcpPlugin via socket connection
+- Handles asynchronous communication and error states
+
+## Development Setup
+
+### Prerequisites
+
+- Rhino 8 for Mac
+- .NET 8.0 SDK
+- Claude Desktop
+
+### Building the Solution
 
 ```bash
-pip install -r requirements.txt
+# Build the plugin
+cd RhinoMcpPlugin
+dotnet build -c Release
+
+# Build the server
+cd ../RhinoMcpServer
+dotnet publish -c Release -o publish
 ```
 
-3. Make sure Rhino 8 is installed with Python support
-
-## Usage
-
-### Running the Server
-
-The server is designed to be started from within Rhino's Python environment:
-
-1. Open Rhino 8
-2. Run the Python script command
-3. Navigate to and run `rhinomcp_server.py`
-
-You can also run the server from a Python environment with Rhino libraries accessible:
+### Installing the Plugin
 
 ```bash
-python rhinomcp_server.py
+mkdir -p ~/Library/Application\ Support/McNeel/Rhinoceros/8.0/Plug-ins/RhinoMcpPlugin/
+cp RhinoMcpPlugin/bin/Release/net7.0/RhinoMcpPlugin.* ~/Library/Application\ Support/McNeel/Rhinoceros/8.0/Plug-ins/RhinoMcpPlugin/
 ```
 
-### Integration with AI Systems
+### Configure Claude Desktop
 
-This MCP server uses the STDIO transport protocol, which means it can be easily integrated with AI systems that support the Model Context Protocol.
-
-For Claude AI integration, add the following to your configuration:
+Create or update `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "rhino": {
-      "command": "python",
-      "args": ["path/to/rhinomcp_server.py"]
+      "command": "dotnet",
+      "args": [
+        "/Users/[username]/path/to/RhinoMcpServer/publish/RhinoMcpServer.dll"
+      ]
     }
   }
 }
 ```
 
-## Available Tools
-
-### Scene Context
-
-To get information about all objects in the current Rhino document:
-
-```python
-# Example of requesting scene context resource
-resource = await mcp.get_resource("scene")
-```
-
-The response includes:
-- Object count
-- List of all objects with their properties (ID, type, layer, color, position, bounding box)
-- Active view
-- Available layers
-
-### Create Sphere
-
-To create a sphere in the Rhino document:
-
-```python
-# Example of calling the create_sphere tool
-result = await mcp.call_tool("create_sphere", {
-    "center_x": 0.0,
-    "center_y": 0.0,
-    "center_z": 0.0,
-    "radius": 5.0,
-    "color": "#FF0000"  # Optional
-})
-```
-
-Each creation operation will prompt the user for consent via a dialog in Rhino.
-
-## Security Considerations
-
-- All operations that modify the Rhino document require explicit user consent
-- Operations are logged for auditing
-- The server runs with the same permissions as the Rhino process
-
-## Error Handling
-
-The server provides detailed error messages for failed operations, including:
-- Invalid parameters
-- Rhino operation failures
-- User consent denials
-
-## Extending the Server
-
-To add new tools or resources:
-
-1. Create new Pydantic models for parameters and results
-2. Add helper functions for Rhino operations
-3. Register new resource handlers with `@mcp.resource_handler()`
-4. Register new tools with `@mcp.tool()`
-
 ## Troubleshooting
 
-- **Import Errors**: Make sure you're running the server within Rhino's Python environment
-- **Connection Issues**: Check that the STDIO channels are properly connected
-- **Operation Failures**: Check the server logs for detailed error messages
+- Use `./debug-server.sh` to run the server with detailed logging
+- Use `./check-rhino-plugin.sh` to verify the Rhino plugin is installed and running
+- Check for log files in the `RhinoMcpServer/logs` directory
 
-## License
+## Version History
 
-This project is available under the MIT License.
-
-## Acknowledgements
-
-- Rhino 3D and McNeel for the Rhino API
-- The Model Context Protocol (MCP) team for the protocol specification 
+- **0.1.0**: Initial implementation with basic geometry creation, server stability improvements, and debugging tools 

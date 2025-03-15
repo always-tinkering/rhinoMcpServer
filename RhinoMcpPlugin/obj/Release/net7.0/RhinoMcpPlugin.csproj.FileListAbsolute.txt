@@ -1,0 +1,11 @@
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpPlugin/bin/Release/net7.0/RhinoMcpPlugin.deps.json
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpPlugin/bin/Release/net7.0/RhinoMcpPlugin.rhp
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpPlugin/bin/Release/net7.0/RhinoMcpPlugin.pdb
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpPlugin/obj/Release/net7.0/RhinoMcpPlugin.csproj.AssemblyReference.cache
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpPlugin/obj/Release/net7.0/RhinoMcpPlugin.GeneratedMSBuildEditorConfig.editorconfig
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpPlugin/obj/Release/net7.0/RhinoMcpPlugin.csproj.CoreCompileInputs.cache
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpPlugin/obj/Release/net7.0/RhinoMcpPlugin.sourcelink.json
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpPlugin/obj/Release/net7.0/RhinoMcpPlugin.rhp
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpPlugin/obj/Release/net7.0/refint/RhinoMcpPlugin.rhp
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpPlugin/obj/Release/net7.0/RhinoMcpPlugin.pdb
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpPlugin/obj/Release/net7.0/ref/RhinoMcpPlugin.rhp

@@ -1,0 +1,15 @@
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpServer/bin/Release/net8.0/osx-arm64/RhinoMcpServer
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpServer/bin/Release/net8.0/osx-arm64/RhinoMcpServer.deps.json
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpServer/bin/Release/net8.0/osx-arm64/RhinoMcpServer.runtimeconfig.json
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpServer/bin/Release/net8.0/osx-arm64/RhinoMcpServer.dll
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpServer/bin/Release/net8.0/osx-arm64/RhinoMcpServer.pdb
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpServer/obj/Release/net8.0/osx-arm64/RhinoMcpServer.GeneratedMSBuildEditorConfig.editorconfig
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpServer/obj/Release/net8.0/osx-arm64/RhinoMcpServer.AssemblyInfoInputs.cache
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpServer/obj/Release/net8.0/osx-arm64/RhinoMcpServer.AssemblyInfo.cs
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpServer/obj/Release/net8.0/osx-arm64/RhinoMcpServer.csproj.CoreCompileInputs.cache
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpServer/obj/Release/net8.0/osx-arm64/RhinoMcpServer.sourcelink.json
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpServer/obj/Release/net8.0/osx-arm64/RhinoMcpServer.dll
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpServer/obj/Release/net8.0/osx-arm64/refint/RhinoMcpServer.dll
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpServer/obj/Release/net8.0/osx-arm64/RhinoMcpServer.pdb
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpServer/obj/Release/net8.0/osx-arm64/RhinoMcpServer.genruntimeconfig.cache
+/Users/angerman/scratch/rhinoMcpServer/RhinoMcpServer/obj/Release/net8.0/osx-arm64/ref/RhinoMcpServer.dll

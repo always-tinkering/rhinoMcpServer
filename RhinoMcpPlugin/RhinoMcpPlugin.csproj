@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net7.0</TargetFramework>
+    <Version>1.0.0</Version>
+    <Title>RhinoMcpPlugin</Title>
+    <Description>Rhino plugin that hosts an MCP server for AI-assisted 3D modeling</Description>
+    <TargetExt>.rhp</TargetExt>
+    <LangVersion>latest</LangVersion>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <SuppressTfmSupportBuildWarnings>true</SuppressTfmSupportBuildWarnings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="RhinoCommon" Version="7.21.22208.15001" IncludeAssets="compile" />
+    <PackageReference Include="MCPSharp" Version="1.0.6" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\**\*" />
+  </ItemGroup>
+
+</Project> 
