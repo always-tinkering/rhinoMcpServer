@@ -13,35 +13,61 @@ namespace RhinoMcpServer
     {
         private const int PORT = 9876;  // Same port as in the RhinoSocketServer
         private static ManualResetEvent _exitEvent = new ManualResetEvent(false);
+        private static object _consoleLock = new object();
+        private static bool _shuttingDown = false;
         
         static async Task Main(string[] args)
         {
-            // Redirect Console.Out to Console.Error to ensure ALL output goes to stderr
-            // This is critical for MCP protocol - any stdout output will break JSON parsing
-            Console.SetOut(Console.Error);
+            // Critical: Use a custom TextWriter for Console.Out to avoid any stdout output
+            // This ensures we never accidentally write to stdout except through our controlled writer
+            var originalOut = Console.Out;
+            Console.SetOut(TextWriter.Null);
             
             try
             {
-                // Use Console.Error for all logging to avoid interfering with the MCP protocol
-                Console.Error.WriteLine("RhinoMcpServer: Starting...");
+                // Use Console.Error for ALL logging
+                lock (_consoleLock)
+                {
+                    Console.Error.WriteLine("RhinoMcpServer: Starting...");
+                }
                 
+                // Attach shutdown handlers to prevent premature exit
                 AppDomain.CurrentDomain.ProcessExit += (s, e) => 
                 {
-                    Console.Error.WriteLine("Process exit event triggered, shutting down...");
+                    lock (_consoleLock)
+                    {
+                        Console.Error.WriteLine("Process exit event triggered, shutting down...");
+                    }
+                    _shuttingDown = true;
                     _exitEvent.Set();
                 };
                 
                 AppDomain.CurrentDomain.UnhandledException += (s, e) =>
                 {
-                    Console.Error.WriteLine($"CRITICAL: Unhandled exception: {e.ExceptionObject}");
+                    lock (_consoleLock)
+                    {
+                        Console.Error.WriteLine($"CRITICAL: Unhandled exception: {e.ExceptionObject}");
+                    }
+                    _shuttingDown = true;
                     _exitEvent.Set();
                 };
                 
-                // Initialize MCP protocol handlers
-                var server = new McpServer();
+                Console.CancelKeyPress += (s, e) =>
+                {
+                    lock (_consoleLock)
+                    {
+                        Console.Error.WriteLine("Ctrl+C detected, shutting down gracefully...");
+                    }
+                    e.Cancel = true; // Don't terminate process immediately
+                    _shuttingDown = true;
+                    _exitEvent.Set();
+                };
                 
-                // Start the server in the background
-                _ = Task.Run(async () => 
+                // Initialize MCP protocol handlers with explicit streams
+                var server = new McpServer(Console.OpenStandardInput(), originalOut);
+                
+                // Start the server in a background task
+                var serverTask = Task.Run(async () => 
                 {
                     try 
                     {
@@ -49,8 +75,12 @@ namespace RhinoMcpServer
                     } 
                     catch (Exception ex)
                     {
-                        Console.Error.WriteLine($"Fatal server error: {ex.Message}");
-                        Console.Error.WriteLine(ex.StackTrace);
+                        lock (_consoleLock)
+                        {
+                            Console.Error.WriteLine($"Fatal server error: {ex.Message}");
+                            Console.Error.WriteLine(ex.StackTrace);
+                        }
+                        _shuttingDown = true;
                         _exitEvent.Set();
                     }
                 });
@@ -59,24 +89,48 @@ namespace RhinoMcpServer
                 // Only show this message when run manually for debugging
                 if (args.Length > 0 && args[0] == "--debug")
                 {
-                    Console.Error.WriteLine("RhinoMcpServer: Press any key to exit");
+                    lock (_consoleLock)
+                    {
+                        Console.Error.WriteLine("RhinoMcpServer: Press any key to exit");
+                    }
                     Console.ReadKey();
+                    _shuttingDown = true;
                     _exitEvent.Set();
                 }
                 else
                 {
                     // Log that we're waiting for events
-                    Console.Error.WriteLine("RhinoMcpServer: Running and waiting for MCP messages...");
+                    lock (_consoleLock)
+                    {
+                        Console.Error.WriteLine("RhinoMcpServer: Running and waiting for MCP messages...");
+                    }
                     
-                    // Block until the exit event is set (which only happens on process exit)
+                    // Block until the exit event is set
                     _exitEvent.WaitOne();
-                    Console.Error.WriteLine("RhinoMcpServer: Exiting gracefully");
+                    
+                    // Give the server a chance to cleanly shut down
+                    if (!serverTask.IsCompleted)
+                    {
+                        lock (_consoleLock)
+                        {
+                            Console.Error.WriteLine("Waiting for server to finish processing...");
+                        }
+                        await Task.WhenAny(serverTask, Task.Delay(3000)); // Wait up to 3 seconds
+                    }
+                    
+                    lock (_consoleLock)
+                    {
+                        Console.Error.WriteLine("RhinoMcpServer: Exiting gracefully");
+                    }
                 }
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"FATAL ERROR in main program loop: {ex.Message}");
-                Console.Error.WriteLine(ex.StackTrace);
+                lock (_consoleLock)
+                {
+                    Console.Error.WriteLine($"FATAL ERROR in main program loop: {ex.Message}");
+                    Console.Error.WriteLine(ex.StackTrace);
+                }
                 // Exit with error code
                 Environment.Exit(1);
             }
@@ -86,51 +140,71 @@ namespace RhinoMcpServer
     class McpServer
     {
         private const int PORT = 9876;
-        private bool keepAlive = true;
+        private readonly Stream _inputStream;
+        private readonly TextWriter _outputWriter;
+        private readonly object _consoleLock = new object();
+        private bool _keepAlive = true;
+        
+        public McpServer(Stream inputStream, TextWriter outputWriter)
+        {
+            _inputStream = inputStream ?? throw new ArgumentNullException(nameof(inputStream));
+            _outputWriter = outputWriter ?? throw new ArgumentNullException(nameof(outputWriter));
+        }
         
         public async Task StartAsync()
         {
-            // Use Console.Error for all logging to avoid interfering with the MCP protocol
-            Console.Error.WriteLine("Initializing server...");
+            lock (_consoleLock)
+            {
+                Console.Error.WriteLine("Initializing server...");
+            }
             
             try
             {
-                // 1. Listen for stdin/stdout communication from Claude Desktop
-                var reader = new StreamReader(Console.OpenStandardInput());
-                var writer = new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true };
+                // Set up dedicated readers and writers for stdin/stdout
+                var reader = new StreamReader(_inputStream);
                 
-                // 2. Set up message handling
-                while (keepAlive)
+                // Set up message handling with perpetual loop
+                while (_keepAlive)
                 {
                     try
                     {
                         var line = await reader.ReadLineAsync();
                         if (line == null)
                         {
-                            Console.Error.WriteLine("Input stream closed, exiting...");
+                            lock (_consoleLock)
+                            {
+                                Console.Error.WriteLine("Input stream closed, exiting...");
+                            }
                             break;
                         }
                         
-                        // Only log message to stderr, NEVER to stdout
-                        Console.Error.WriteLine($"Message from client: {line}");
+                        lock (_consoleLock)
+                        {
+                            Console.Error.WriteLine($"Message from client: {line}");
+                        }
                         
                         var response = await ProcessMcpMessage(line);
                         
-                        // ONLY the JSON response goes to stdout - nothing else!
-                        await writer.WriteLineAsync(response);
+                        // CRITICAL: Only write JSON responses to stdout
+                        // We lock to ensure no other thread can write to stdout
+                        await _outputWriter.WriteLineAsync(response);
+                        await _outputWriter.FlushAsync();
                         
                         // Add a small delay to allow other operations to finish
                         await Task.Delay(50);
                     }
                     catch (Exception ex)
                     {
-                        Console.Error.WriteLine($"Error processing message: {ex.Message}");
-                        Console.Error.WriteLine($"Stack trace: {ex.StackTrace}");
+                        lock (_consoleLock)
+                        {
+                            Console.Error.WriteLine($"Error processing message: {ex.Message}");
+                            Console.Error.WriteLine($"Stack trace: {ex.StackTrace}");
+                        }
                         
                         try
                         {
                             // Try to send an error response
-                            await writer.WriteLineAsync(JsonSerializer.Serialize(new
+                            var errorResponse = JsonSerializer.Serialize(new
                             {
                                 jsonrpc = "2.0",
                                 id = 0,
@@ -139,11 +213,17 @@ namespace RhinoMcpServer
                                     code = -32603,
                                     message = $"Internal error: {ex.Message}"
                                 }
-                            }));
+                            });
+                            
+                            await _outputWriter.WriteLineAsync(errorResponse);
+                            await _outputWriter.FlushAsync();
                         }
                         catch (Exception innerEx)
                         {
-                            Console.Error.WriteLine($"Failed to send error response: {innerEx.Message}");
+                            lock (_consoleLock)
+                            {
+                                Console.Error.WriteLine($"Failed to send error response: {innerEx.Message}");
+                            }
                         }
                         
                         // Don't break the loop for errors, keep trying to process messages
@@ -152,11 +232,17 @@ namespace RhinoMcpServer
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"CRITICAL ERROR in StartAsync: {ex.Message}");
-                Console.Error.WriteLine($"Stack trace: {ex.StackTrace}");
+                lock (_consoleLock)
+                {
+                    Console.Error.WriteLine($"CRITICAL ERROR in StartAsync: {ex.Message}");
+                    Console.Error.WriteLine($"Stack trace: {ex.StackTrace}");
+                }
             }
             
-            Console.Error.WriteLine("Server shutting down...");
+            lock (_consoleLock)
+            {
+                Console.Error.WriteLine("Server shutting down...");
+            }
         }
         
         private async Task<string> ProcessMcpMessage(string message)
@@ -176,7 +262,10 @@ namespace RhinoMcpServer
                 switch (method)
                 {
                     case "initialize":
-                        Console.Error.WriteLine("Server started and connected successfully");
+                        lock (_consoleLock)
+                        {
+                            Console.Error.WriteLine("Server started and connected successfully");
+                        }
                         
                         // Return initialization response with tools and resources
                         return JsonSerializer.Serialize(new
@@ -270,12 +359,18 @@ namespace RhinoMcpServer
                         var toolName = request.GetProperty("params").GetProperty("name").GetString();
                         var parameters = request.GetProperty("params").GetProperty("parameters");
                         
-                        Console.Error.WriteLine($"Executing tool: {toolName}");
+                        lock (_consoleLock)
+                        {
+                            Console.Error.WriteLine($"Executing tool: {toolName}");
+                        }
                         
                         // Execute the tool by sending command to Rhino plugin via socket
                         var result = await ExecuteToolAsync(toolName, parameters);
                         
-                        Console.Error.WriteLine($"Tool execution result: {result}");
+                        lock (_consoleLock)
+                        {
+                            Console.Error.WriteLine($"Tool execution result: {result}");
+                        }
                         
                         return JsonSerializer.Serialize(new
                         {
@@ -288,8 +383,11 @@ namespace RhinoMcpServer
                         });
                         
                     case "shutdown":
-                        Console.Error.WriteLine("Received shutdown request");
-                        keepAlive = false;
+                        lock (_consoleLock)
+                        {
+                            Console.Error.WriteLine("Received shutdown request");
+                        }
+                        _keepAlive = false;
                         return JsonSerializer.Serialize(new
                         {
                             jsonrpc = "2.0",
@@ -298,7 +396,10 @@ namespace RhinoMcpServer
                         });
                         
                     default:
-                        Console.Error.WriteLine($"Unknown method: {method}");
+                        lock (_consoleLock)
+                        {
+                            Console.Error.WriteLine($"Unknown method: {method}");
+                        }
                         return JsonSerializer.Serialize(new
                         {
                             jsonrpc = "2.0",
@@ -309,8 +410,11 @@ namespace RhinoMcpServer
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error processing message: {ex.Message}");
-                Console.Error.WriteLine($"Stack trace: {ex.StackTrace}");
+                lock (_consoleLock)
+                {
+                    Console.Error.WriteLine($"Error processing message: {ex.Message}");
+                    Console.Error.WriteLine($"Stack trace: {ex.StackTrace}");
+                }
                 return JsonSerializer.Serialize(new
                 {
                     jsonrpc = "2.0",
@@ -328,7 +432,10 @@ namespace RhinoMcpServer
         {
             if (string.IsNullOrEmpty(toolName))
             {
-                Console.Error.WriteLine("WARNING: Tool name is null or empty");
+                lock (_consoleLock)
+                {
+                    Console.Error.WriteLine("WARNING: Tool name is null or empty");
+                }
                 return JsonSerializer.Serialize(new { error = "Tool name cannot be null or empty" });
             }
             
@@ -353,14 +460,22 @@ namespace RhinoMcpServer
             
             try
             {
-                Console.Error.WriteLine($"Connecting to Rhino socket server on localhost:{PORT}");
+                lock (_consoleLock)
+                {
+                    Console.Error.WriteLine($"Connecting to Rhino socket server on localhost:{PORT}");
+                }
+                
                 using (var client = new TcpClient("localhost", PORT))
                 {
                     var stream = client.GetStream();
                     
                     // Send command
                     var commandJson = JsonSerializer.Serialize(command);
-                    Console.Error.WriteLine($"Sending command: {commandJson}");
+                    lock (_consoleLock)
+                    {
+                        Console.Error.WriteLine($"Sending command: {commandJson}");
+                    }
+                    
                     var buffer = Encoding.UTF8.GetBytes(commandJson);
                     await stream.WriteAsync(buffer, 0, buffer.Length);
                     
@@ -368,15 +483,22 @@ namespace RhinoMcpServer
                     buffer = new byte[4096];
                     int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
                     var response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                    Console.Error.WriteLine($"Received response: {response}");
+                    
+                    lock (_consoleLock)
+                    {
+                        Console.Error.WriteLine($"Received response: {response}");
+                    }
                     
                     return response;
                 }
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error executing tool: {ex.Message}");
-                Console.Error.WriteLine($"Stack trace: {ex.StackTrace}");
+                lock (_consoleLock)
+                {
+                    Console.Error.WriteLine($"Error executing tool: {ex.Message}");
+                    Console.Error.WriteLine($"Stack trace: {ex.StackTrace}");
+                }
                 return $"{{\"error\": \"{ex.Message.Replace("\"", "\\\"").Replace("\n", "\\n")}\"}}";
             }
         }

@@ -6,8 +6,10 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <RuntimeIdentifier>osx-arm64</RuntimeIdentifier>
-    <TargetFrameworkVersion>8.0.0</TargetFrameworkVersion>
-    <RollForward>LatestMinor</RollForward>
+    <RollForward>Major</RollForward>
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
+    <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 
 </Project>
