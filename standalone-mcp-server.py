@@ -36,6 +36,12 @@ SERVER_PROCESS = None
 SERVER_LOCK = Lock()
 RHINO_PORT = 9876
 EXIT_FLAG = False
+IGNORE_SIGNALS = False  # Flag to temporarily ignore signals during critical sections
+
+# Create a PID file to track this process
+pid_file = os.path.join(log_dir, "standalone_server.pid")
+with open(pid_file, "w") as f:
+    f.write(str(os.getpid()))
 
 def send_json_response(data):
     """Send a JSON response to stdout (Claude)"""
@@ -103,79 +109,86 @@ def handle_initialize():
     """Handle the initialize request and return server capabilities"""
     logging.info("Processing initialize request")
     
-    # Return hard-coded initialization response with tools
-    response = {
-        "jsonrpc": "2.0",
-        "id": 0,
-        "result": {
-            "serverInfo": {
-                "name": "RhinoMcpServer",
-                "version": "0.1.0"
-            },
-            "capabilities": {
-                "tools": [
-                    {
-                        "name": "geometry_tools.create_sphere",
-                        "description": "Creates a sphere with the specified center and radius",
-                        "parameters": [
-                            {"name": "centerX", "description": "X coordinate of the sphere center", "required": True, "schema": {"type": "number"}},
-                            {"name": "centerY", "description": "Y coordinate of the sphere center", "required": True, "schema": {"type": "number"}},
-                            {"name": "centerZ", "description": "Z coordinate of the sphere center", "required": True, "schema": {"type": "number"}},
-                            {"name": "radius", "description": "Radius of the sphere", "required": True, "schema": {"type": "number"}},
-                            {"name": "color", "description": "Optional color for the sphere (e.g., 'red', 'blue', etc.)", "required": False, "schema": {"type": "string"}}
-                        ]
-                    },
-                    {
-                        "name": "geometry_tools.create_box",
-                        "description": "Creates a box with the specified dimensions",
-                        "parameters": [
-                            {"name": "cornerX", "description": "X coordinate of the box corner", "required": True, "schema": {"type": "number"}},
-                            {"name": "cornerY", "description": "Y coordinate of the box corner", "required": True, "schema": {"type": "number"}},
-                            {"name": "cornerZ", "description": "Z coordinate of the box corner", "required": True, "schema": {"type": "number"}},
-                            {"name": "width", "description": "Width of the box (X dimension)", "required": True, "schema": {"type": "number"}},
-                            {"name": "depth", "description": "Depth of the box (Y dimension)", "required": True, "schema": {"type": "number"}},
-                            {"name": "height", "description": "Height of the box (Z dimension)", "required": True, "schema": {"type": "number"}},
-                            {"name": "color", "description": "Optional color for the box (e.g., 'red', 'blue', etc.)", "required": False, "schema": {"type": "string"}}
-                        ]
-                    },
-                    {
-                        "name": "geometry_tools.create_cylinder",
-                        "description": "Creates a cylinder with the specified base point, height, and radius",
-                        "parameters": [
-                            {"name": "baseX", "description": "X coordinate of the cylinder base point", "required": True, "schema": {"type": "number"}},
-                            {"name": "baseY", "description": "Y coordinate of the cylinder base point", "required": True, "schema": {"type": "number"}},
-                            {"name": "baseZ", "description": "Z coordinate of the cylinder base point", "required": True, "schema": {"type": "number"}},
-                            {"name": "height", "description": "Height of the cylinder", "required": True, "schema": {"type": "number"}},
-                            {"name": "radius", "description": "Radius of the cylinder", "required": True, "schema": {"type": "number"}},
-                            {"name": "color", "description": "Optional color for the cylinder (e.g., 'red', 'blue', etc.)", "required": False, "schema": {"type": "string"}}
-                        ]
-                    },
-                    {
-                        "name": "scene_tools.get_scene_info",
-                        "description": "Gets information about objects in the current scene",
-                        "parameters": []
-                    },
-                    {
-                        "name": "scene_tools.clear_scene",
-                        "description": "Clears all objects from the current scene",
-                        "parameters": [
-                            {"name": "currentLayerOnly", "description": "If true, only delete objects on the current layer", "required": False, "schema": {"type": "boolean"}}
-                        ]
-                    },
-                    {
-                        "name": "scene_tools.create_layer",
-                        "description": "Creates a new layer in the Rhino document",
-                        "parameters": [
-                            {"name": "name", "description": "Name of the new layer", "required": True, "schema": {"type": "string"}},
-                            {"name": "color", "description": "Optional color for the layer (e.g., 'red', 'blue', etc.)", "required": False, "schema": {"type": "string"}}
-                        ]
-                    }
-                ]
+    # Set flag to ignore signals during initialization
+    global IGNORE_SIGNALS
+    IGNORE_SIGNALS = True
+    
+    try:
+        # Return hard-coded initialization response with tools
+        response = {
+            "jsonrpc": "2.0",
+            "id": 0,
+            "result": {
+                "serverInfo": {
+                    "name": "RhinoMcpServer",
+                    "version": "0.1.0"
+                },
+                "capabilities": {
+                    "tools": [
+                        {
+                            "name": "geometry_tools.create_sphere",
+                            "description": "Creates a sphere with the specified center and radius",
+                            "parameters": [
+                                {"name": "centerX", "description": "X coordinate of the sphere center", "required": True, "schema": {"type": "number"}},
+                                {"name": "centerY", "description": "Y coordinate of the sphere center", "required": True, "schema": {"type": "number"}},
+                                {"name": "centerZ", "description": "Z coordinate of the sphere center", "required": True, "schema": {"type": "number"}},
+                                {"name": "radius", "description": "Radius of the sphere", "required": True, "schema": {"type": "number"}},
+                                {"name": "color", "description": "Optional color for the sphere (e.g., 'red', 'blue', etc.)", "required": False, "schema": {"type": "string"}}
+                            ]
+                        },
+                        {
+                            "name": "geometry_tools.create_box",
+                            "description": "Creates a box with the specified dimensions",
+                            "parameters": [
+                                {"name": "cornerX", "description": "X coordinate of the box corner", "required": True, "schema": {"type": "number"}},
+                                {"name": "cornerY", "description": "Y coordinate of the box corner", "required": True, "schema": {"type": "number"}},
+                                {"name": "cornerZ", "description": "Z coordinate of the box corner", "required": True, "schema": {"type": "number"}},
+                                {"name": "width", "description": "Width of the box (X dimension)", "required": True, "schema": {"type": "number"}},
+                                {"name": "depth", "description": "Depth of the box (Y dimension)", "required": True, "schema": {"type": "number"}},
+                                {"name": "height", "description": "Height of the box (Z dimension)", "required": True, "schema": {"type": "number"}},
+                                {"name": "color", "description": "Optional color for the box (e.g., 'red', 'blue', etc.)", "required": False, "schema": {"type": "string"}}
+                            ]
+                        },
+                        {
+                            "name": "geometry_tools.create_cylinder",
+                            "description": "Creates a cylinder with the specified base point, height, and radius",
+                            "parameters": [
+                                {"name": "baseX", "description": "X coordinate of the cylinder base point", "required": True, "schema": {"type": "number"}},
+                                {"name": "baseY", "description": "Y coordinate of the cylinder base point", "required": True, "schema": {"type": "number"}},
+                                {"name": "baseZ", "description": "Z coordinate of the cylinder base point", "required": True, "schema": {"type": "number"}},
+                                {"name": "height", "description": "Height of the cylinder", "required": True, "schema": {"type": "number"}},
+                                {"name": "radius", "description": "Radius of the cylinder", "required": True, "schema": {"type": "number"}},
+                                {"name": "color", "description": "Optional color for the cylinder (e.g., 'red', 'blue', etc.)", "required": False, "schema": {"type": "string"}}
+                            ]
+                        },
+                        {
+                            "name": "scene_tools.get_scene_info",
+                            "description": "Gets information about objects in the current scene",
+                            "parameters": []
+                        },
+                        {
+                            "name": "scene_tools.clear_scene",
+                            "description": "Clears all objects from the current scene",
+                            "parameters": [
+                                {"name": "currentLayerOnly", "description": "If true, only delete objects on the current layer", "required": False, "schema": {"type": "boolean"}}
+                            ]
+                        },
+                        {
+                            "name": "scene_tools.create_layer",
+                            "description": "Creates a new layer in the Rhino document",
+                            "parameters": [
+                                {"name": "name", "description": "Name of the new layer", "required": True, "schema": {"type": "string"}},
+                                {"name": "color", "description": "Optional color for the layer (e.g., 'red', 'blue', etc.)", "required": False, "schema": {"type": "string"}}
+                            ]
+                        }
+                    ]
+                }
             }
         }
-    }
-    
-    return response
+        return response
+    finally:
+        # Reset signal flag
+        IGNORE_SIGNALS = False
 
 def handle_tool_call(request):
     """Handle a tool call request and forward to Rhino"""
@@ -271,6 +284,10 @@ def main_loop():
     """Main server loop to process messages"""
     logging.info("Starting MCP server main loop")
     
+    # Create a keep-alive thread to handle client reconnections
+    keepalive_thread = Thread(target=keepalive_ping, daemon=True)
+    keepalive_thread.start()
+    
     while not EXIT_FLAG:
         try:
             # Read message from stdin
@@ -295,24 +312,62 @@ def main_loop():
     
     logging.info("Main loop exited")
 
+def keepalive_ping():
+    """Thread function to keep the server alive during client reconnections"""
+    while not EXIT_FLAG:
+        # Just write a small log message every 30 seconds to show we're alive
+        logging.debug("Keepalive thread active - server is waiting for requests")
+        time.sleep(30)
+
 def signal_handler(sig, frame):
     """Handle termination signals"""
+    if IGNORE_SIGNALS:
+        logging.warning(f"Received signal {sig} but ignoring during critical operation")
+        return
+        
     logging.info(f"Received signal {sig}, shutting down...")
     global EXIT_FLAG
     EXIT_FLAG = True
 
+def cleanup():
+    """Clean up resources when exiting"""
+    # Remove PID file
+    try:
+        if os.path.exists(pid_file):
+            os.remove(pid_file)
+    except Exception as e:
+        logging.error(f"Error removing PID file: {str(e)}")
+
 if __name__ == "__main__":
-    # Set up signal handlers
-    signal.signal(signal.SIGINT, signal_handler)
+    # Set up signal handlers - but make them more resilient
+    # SIGTERM (15) - termination request
     signal.signal(signal.SIGTERM, signal_handler)
+    # SIGINT (2) - keyboard interrupt
+    signal.signal(signal.SIGINT, signal_handler)
+    # SIGHUP (1) - terminal closed
+    signal.signal(signal.SIGHUP, signal_handler)
+    
+    # Get the current working directory
+    working_dir = os.getcwd()
     
     logging.info("=== Standalone MCP Server Starting ===")
     logging.info(f"Process ID: {os.getpid()}")
     logging.info(f"Python version: {sys.version}")
-    logging.info(f"Working directory: {os.getcwd()}")
+    logging.info(f"Working directory: {working_dir}")
     logging.info(f"Log file: {log_file}")
     
+    # Register the cleanup function to run at exit
+    import atexit
+    atexit.register(cleanup)
+    
     try:
+        # Update the current directory - very important!
+        # Claude Desktop might start us in /, which isn't helpful
+        if working_dir == "/":
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            os.chdir(script_dir)
+            logging.info(f"Changed working directory to: {script_dir}")
+        
         # Start the main processing loop
         main_loop()
     except KeyboardInterrupt:
@@ -320,4 +375,5 @@ if __name__ == "__main__":
     except Exception as e:
         logging.error(f"Fatal error: {str(e)}")
     finally:
+        cleanup()
         logging.info("=== Server Shutdown Complete ===") 
