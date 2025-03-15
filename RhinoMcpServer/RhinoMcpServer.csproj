@@ -3,13 +3,23 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
+    <RollForward>LatestMajor</RollForward>
+    <RollForwardOnNoCandidateFx>2</RollForwardOnNoCandidateFx>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <ApplicationIcon />
+    <StartupObject />
+    <AssemblyName>RhinoMcpServer</AssemblyName>
+    <RootNamespace>RhinoMcpServer</RootNamespace>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <RuntimeIdentifier>osx-arm64</RuntimeIdentifier>
-    <RollForward>Major</RollForward>
     <SelfContained>false</SelfContained>
     <PublishSingleFile>false</PublishSingleFile>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <DebugType>embedded</DebugType>
+    <Version>0.1.0</Version>
+    <Authors>Anthropic</Authors>
+    <Description>Rhino MCP Server for Claude Desktop</Description>
   </PropertyGroup>
 
 </Project>

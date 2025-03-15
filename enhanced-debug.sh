@@ -1,131 +1,110 @@
 #!/bin/bash
 
-# Enhanced debugging script with comprehensive environment capture
-# This script runs the RhinoMcpServer with detailed logging and environment information
+# Enhanced Debug Script for RhinoMcpServer
+# This script runs the server with detailed diagnostic information
+# and captures logs for debugging purposes.
 
-# Set execution directory
-cd "$(dirname "$0")"
+# Set -e to exit on error, -u to error on undefined variables
+set -e
+set -u
 
-# Create logs directory if it doesn't exist
-mkdir -p logs
-
-# Get timestamp for log files
+# Get a timestamp for log filenames
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-LOG_DIR="logs/debug_${TIMESTAMP}"
+LOG_DIR="./logs"
+DEBUG_LOG="${LOG_DIR}/debug_${TIMESTAMP}.log"
+
+# Ensure log directory exists
 mkdir -p "$LOG_DIR"
 
-# Log files
-STDERR_LOG="${LOG_DIR}/stderr.log"
-STDOUT_LOG="${LOG_DIR}/stdout.log"
-ENV_LOG="${LOG_DIR}/environment.log"
-DOTNET_INFO="${LOG_DIR}/dotnet_info.log"
-DOTNET_VERSIONS="${LOG_DIR}/dotnet_versions.log"
-PROCESS_LOG="${LOG_DIR}/process.log"
+# Create a function to echo with timestamp
+log() {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$DEBUG_LOG"
+}
 
-# Echo status
-echo "==============================================="
-echo "ENHANCED DEBUGGING FOR RHINOMCPSERVER"
-echo "==============================================="
-echo "Log directory: $LOG_DIR"
+# Log system information
+log "===== ENHANCED DEBUG MODE STARTED ====="
+log "System: $(uname -a)"
+log "Current directory: $(pwd)"
+log "User: $(whoami)"
+log "Path: $PATH"
 
-# Capture environment information
-echo "Capturing environment information..."
-
-# System info
-echo "=== SYSTEM INFO ===" > "$ENV_LOG"
-uname -a >> "$ENV_LOG"
-echo "" >> "$ENV_LOG"
-
-# .NET info
-echo "=== .NET INFO ===" >> "$ENV_LOG"
-dotnet --info > "$DOTNET_INFO"
-echo "See $DOTNET_INFO for details" >> "$ENV_LOG"
-echo "" >> "$ENV_LOG"
-
-# .NET SDK and Runtime versions
-echo "=== .NET SDK VERSIONS ===" > "$DOTNET_VERSIONS"
-dotnet --list-sdks >> "$DOTNET_VERSIONS"
-echo "" >> "$DOTNET_VERSIONS"
-echo "=== .NET RUNTIME VERSIONS ===" >> "$DOTNET_VERSIONS"
-dotnet --list-runtimes >> "$DOTNET_VERSIONS"
-echo "" >> "$DOTNET_VERSIONS"
-echo "See $DOTNET_VERSIONS for details" >> "$ENV_LOG"
-echo "" >> "$ENV_LOG"
-
-# Check publish directory
-echo "=== PUBLISHED SERVER FILES ===" >> "$ENV_LOG"
-find "$(pwd)/RhinoMcpServer/publish" -type f | sort >> "$ENV_LOG"
-echo "" >> "$ENV_LOG"
-
-# Directory structure
-echo "=== DIRECTORY STRUCTURE ===" >> "$ENV_LOG"
-find "$(pwd)" -type f -not -path "*/\.*" -not -path "*/logs/*" -not -path "*/bin/*" -not -path "*/obj/*" | sort >> "$ENV_LOG"
-echo "" >> "$ENV_LOG"
-
-# Claude configuration
-echo "=== CLAUDE CONFIG ===" >> "$ENV_LOG"
-if [ -f "$HOME/Library/Application Support/Claude/claude_desktop_config.json" ]; then
-    cat "$HOME/Library/Application Support/Claude/claude_desktop_config.json" >> "$ENV_LOG"
+# Log .NET information
+log "=== .NET RUNTIME INFO ==="
+if command -v dotnet &> /dev/null; then
+  log "dotnet version: $(dotnet --version)"
+  log "dotnet info:"
+  dotnet --info | tee -a "$DEBUG_LOG"
 else
-    echo "Claude config not found" >> "$ENV_LOG"
+  log "ERROR: dotnet not found in PATH"
+  exit 1
 fi
-echo "" >> "$ENV_LOG"
 
-# Check for server process already running
-echo "=== CHECKING FOR EXISTING SERVER PROCESSES ===" >> "$ENV_LOG"
-ps aux | grep "RhinoMcpServer.dll" | grep -v grep >> "$ENV_LOG" || echo "No RhinoMcpServer processes found" >> "$ENV_LOG"
-echo "" >> "$ENV_LOG"
+# Check for the RhinoMcpServer.dll
+SERVER_DLL="./RhinoMcpServer/publish/RhinoMcpServer.dll"
+if [ ! -f "$SERVER_DLL" ]; then
+  log "ERROR: Server DLL not found at $SERVER_DLL"
+  log "Current directory contents:"
+  ls -la | tee -a "$DEBUG_LOG"
+  
+  log "Attempting to find the DLL:"
+  find . -name "RhinoMcpServer.dll" | tee -a "$DEBUG_LOG"
+  exit 1
+fi
 
-# Run server with complete environment
-echo "Starting server with enhanced logging..."
-echo "" >> "$ENV_LOG"
-echo "=== PROCESS START: $(date) ===" >> "$ENV_LOG"
+# Log project file and dependencies
+log "=== PROJECT INFO ==="
+log "Project file contents:"
+cat ./RhinoMcpServer/RhinoMcpServer.csproj | tee -a "$DEBUG_LOG"
 
-# Set up comprehensive environment variables for .NET
-export DOTNET_CLI_UI_LANGUAGE=en
-export DOTNET_ENVIRONMENT=Development
-export DOTNET_CONSOLE_ENCODING=utf-8
-export DOTNET_ROOT=/usr/local/share/dotnet
-export DOTNET_ROLL_FORWARD=Major
+# Log environment variables
+log "=== ENVIRONMENT VARIABLES ==="
+env | grep -i "DOTNET\|NET\|PATH" | sort | tee -a "$DEBUG_LOG"
+
+# Set diagnostic environment variables
+export DOTNET_CLI_CAPTURE_TIMING=1
+export DOTNET_ROLL_FORWARD=LatestMajor
+export DOTNET_ROLL_FORWARD_ON_NO_CANDIDATE_FX=2
 export DOTNET_ROLL_FORWARD_TO_PRERELEASE=1
 export DOTNET_MULTILEVEL_LOOKUP=1
+export DOTNET_CLI_UI_LANGUAGE=en-US
+export DOTNET_NOLOGO=0
 export DOTNET_CLI_TELEMETRY_OPTOUT=1
+export DOTNET_LOGGING__CONSOLE__DISABLECOLORS=true
+export DOTNET_LOGGING__CONSOLE__FORMAT=json
 
-# Record environment variables being used
-echo "=== DOTNET ENVIRONMENT VARIABLES ===" >> "$ENV_LOG"
-env | grep DOTNET_ >> "$ENV_LOG"
-echo "" >> "$ENV_LOG"
+# Output the environment variables after setting
+log "Set diagnostics environment variables:"
+env | grep -i "DOTNET\|NET" | sort | tee -a "$DEBUG_LOG"
 
-# Run the server with debug flag and save PID
-(
-  stdbuf -oL -eL dotnet RhinoMcpServer/publish/RhinoMcpServer.dll --debug 2> >(tee "$STDERR_LOG") > >(tee "$STDOUT_LOG") &
-  PID=$!
-  
-  # Save PID to file for later reference
-  echo $PID > "${LOG_DIR}/server.pid"
-  
-  # Monitor the process and log its status
-  echo "PID: $PID" >> "$PROCESS_LOG"
-  echo "Start time: $(date)" >> "$PROCESS_LOG"
-  
-  # Wait for the process and capture exit code
-  wait $PID
-  EXIT_CODE=$?
-  
-  echo "Exit code: $EXIT_CODE" >> "$PROCESS_LOG"
-  echo "End time: $(date)" >> "$PROCESS_LOG"
-  
-  # Check for crash files
-  if [ -d "$HOME/Library/Logs/DiagnosticReports" ]; then
-    echo "Checking for crash reports..." >> "$PROCESS_LOG"
-    find "$HOME/Library/Logs/DiagnosticReports" -name "dotnet_*" -cmin -10 >> "$PROCESS_LOG"
-  fi
-)
+# Run the server with full verbosity
+log "Starting server with full diagnostics..."
+log "Command: dotnet $SERVER_DLL --diagnostics --debug"
 
-echo ""
-echo "Debugging session completed"
-echo "Logs are available in: $LOG_DIR"
-echo "To view stderr: cat $STDERR_LOG"
-echo "To view stdout: cat $STDOUT_LOG"
-echo "To view environment info: cat $ENV_LOG"
-echo "===============================================" 
+# Start the server and save both stdout and stderr to the log file
+# The 2>&1 redirects stderr to stdout, and the tee -a appends it to the log file
+dotnet $SERVER_DLL --diagnostics --debug 2>&1 | tee -a "$DEBUG_LOG"
+
+# This part will only execute if the server exits (normally it should run indefinitely)
+EXIT_CODE=$?
+log "Server exited with code: $EXIT_CODE"
+
+# Post-mortem analysis
+log "=== POST-MORTEM ANALYSIS ==="
+log "Last 30 lines of log:"
+tail -n 30 "$DEBUG_LOG" | tee -a "${LOG_DIR}/postmortem_${TIMESTAMP}.log"
+
+log "Memory usage at time of exit:"
+ps aux | grep -i dotnet | tee -a "${LOG_DIR}/postmortem_${TIMESTAMP}.log"
+
+log "Disk space:"
+df -h | tee -a "${LOG_DIR}/postmortem_${TIMESTAMP}.log"
+
+log "Network connections:"
+netstat -anp 2>/dev/null | grep -i dotnet | tee -a "${LOG_DIR}/postmortem_${TIMESTAMP}.log" || true
+
+log "===== DEBUG SESSION ENDED ====="
+log "Full debug log available at: $DEBUG_LOG"
+log "Post-mortem analysis: ${LOG_DIR}/postmortem_${TIMESTAMP}.log"
+
+# Exit with the same code as the server
+exit $EXIT_CODE 
