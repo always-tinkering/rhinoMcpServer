@@ -386,20 +386,27 @@ def process_message(message):
             # Handle initialize request
             response = handle_initialize(message)
             send_json_response(response)
+            # Don't exit after initialize
             return True
         elif message.get("method") == "notifications/cancelled":
             # Handle cancellation notification without exiting
+            print("Received cancellation notification - continuing to run", file=sys.stderr)
             return True
         elif message.get("method") == "tools/call":
-            return handle_tool_call(message)
+            response = handle_tool_call(message)
+            send_json_response(response)
+            return True
         elif message.get("method") == "shutdown":
-            return handle_shutdown(message)
-        else:
-            logging.warning(f"Unknown method: {message.get('method')}")
+            response = handle_shutdown(message)
+            send_json_response(response)
             return False
+        else:
+            print(f"Unknown method: {message.get('method')}", file=sys.stderr)
+            return True
     except Exception as e:
         print(f"Error processing message: {e}", file=sys.stderr)
-        return False
+        traceback.print_exc(file=sys.stderr)
+        return True  # Keep running even on errors
 
 def connection_monitor():
     """
@@ -440,6 +447,8 @@ def persist_stdin():
     global EXIT_FLAG
     has_initialized = False
     
+    print("Stdin persistence thread started", file=sys.stderr)
+    
     while not EXIT_FLAG:
         try:
             line = sys.stdin.readline()
@@ -453,19 +462,25 @@ def persist_stdin():
                     break
             
             message = json.loads(line)
-            success = process_message(message)
+            print(f"Processing message: {message.get('method')}", file=sys.stderr)
             
             if message.get("method") == "initialize":
                 has_initialized = True
+                print("Server initialized successfully", file=sys.stderr)
             
+            success = process_message(message)
             if not success:
+                print("Message processing indicated shutdown", file=sys.stderr)
                 break
                 
         except Exception as e:
             print(f"Error in persist_stdin: {e}", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
             if not has_initialized:
                 break
             time.sleep(1)
+    
+    print("Stdin persistence thread exiting", file=sys.stderr)
 
 def keepalive_ping():
     """Thread function to keep the server alive during client reconnections"""
@@ -495,14 +510,16 @@ def main_loop():
     """Main server loop."""
     global EXIT_FLAG
     EXIT_FLAG = False
-    has_initialized = False
     
     try:
         # Clear any buffered output
         sys.stdout.flush()
         sys.stdout.buffer.flush()
         
-        # Create threads for connection monitoring and stdin persistence
+        print("=== MCP Server Starting ===", file=sys.stderr)
+        print(f"Process ID: {os.getpid()}", file=sys.stderr)
+        
+        # Create threads
         threads = []
         
         # Start stdin persistence thread
@@ -516,19 +533,27 @@ def main_loop():
         threads.append(ping_thread)
         
         # Wait for threads
-        for thread in threads:
-            thread.join()
+        while not EXIT_FLAG:
+            # Check if threads are alive
+            all_alive = all(t.is_alive() for t in threads)
+            if not all_alive:
+                print("One or more threads died unexpectedly", file=sys.stderr)
+                break
+            time.sleep(0.1)
             
     except Exception as e:
         print(f"Error in main loop: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
     finally:
+        print("Main loop exiting, cleaning up threads...", file=sys.stderr)
         EXIT_FLAG = True
         # Wait for threads to exit gracefully
         for thread in threads:
             try:
                 thread.join(timeout=2.0)
-            except Exception:
-                pass
+                print(f"Thread {thread.name} {'exited' if not thread.is_alive() else 'still running'}", file=sys.stderr)
+            except Exception as e:
+                print(f"Error joining thread: {e}", file=sys.stderr)
 
 def signal_handler(sig, frame):
     """Handle termination signals"""
