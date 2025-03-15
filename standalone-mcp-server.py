@@ -100,15 +100,23 @@ def receive_message(timeout=None):
                     line = sys.stdin.buffer.readline()
                     if not line:
                         result[0] = None  # EOF
+                        logging.warning("EOF detected on stdin - client disconnected")
                         return
                     
                     line_str = line.decode('utf-8').strip()
                     if not line_str:
                         result[0] = None  # Empty line
+                        logging.warning("Empty line received on stdin")
                     else:
                         result[0] = line_str
+                        # Log the full message content for debugging
+                        if '"method":"initialize"' in line_str:
+                            logging.info(f"RECEIVED INITIALIZE MESSAGE: {line_str}")
+                        else:
+                            logging.debug(f"Received message: {line_str[:100]}...")
                 except Exception as e:
                     logging.error(f"Error in read_input thread: {str(e)}")
+                    logging.error(f"Stack trace: {traceback.format_exc()}")
                     result[0] = None
                 finally:
                     CONNECTION_EVENT.set()  # Signal that reading is done
@@ -135,9 +143,15 @@ def receive_message(timeout=None):
         # Decode the bytes to string
         line_str = line.decode('utf-8').strip()
         if not line_str:
+            logging.warning("Empty line received on stdin")
             return None  # Empty line
         
-        logging.debug(f"Received message: {line_str[:100]}...")
+        # Log the full message for important messages
+        if '"method":"initialize"' in line_str:
+            logging.info(f"RECEIVED INITIALIZE MESSAGE: {line_str}")
+        else:
+            logging.debug(f"Received message: {line_str[:100]}...")
+            
         return line_str
     except Exception as e:
         logging.error(f"Error reading message: {str(e)}")
@@ -172,19 +186,29 @@ def send_to_rhino(message):
         logging.error(f"Error communicating with Rhino: {str(e)}")
         return json.dumps({"error": f"Error communicating with Rhino: {str(e)}"})
 
-def handle_initialize():
+def handle_initialize(request=None):
     """Handle the initialize request and return server capabilities"""
     logging.info("Processing initialize request")
+    
+    # Get request ID from the client (default to 0 if not provided)
+    request_id = 0
+    if request and isinstance(request, dict):
+        request_id = request.get("id", 0)
+        logging.info(f"Using request ID from client: {request_id}")
     
     # Set flag to ignore signals during initialization
     global IGNORE_SIGNALS, SERVER_STATE
     IGNORE_SIGNALS = True
     
     try:
+        # Log detailed info about the request
+        if request:
+            logging.info(f"Initialize request details: {json.dumps(request)[:200]}...")
+        
         # Return hard-coded initialization response with tools
         response = {
             "jsonrpc": "2.0",
-            "id": 0,
+            "id": request_id,  # Use the client's request ID
             "result": {
                 "serverInfo": {
                     "name": "RhinoMcpServer",
@@ -252,6 +276,9 @@ def handle_initialize():
                 }
             }
         }
+        
+        # Log the response before sending
+        logging.info(f"Response prepared: {json.dumps(response)[:200]}...")
         
         # Mark server as initialized after successful response
         SERVER_STATE = "initialized"
@@ -333,8 +360,10 @@ def process_message(message):
         request = json.loads(message)
         method = request.get("method", "")
         
+        logging.info(f"Processing method: {method} with request ID: {request.get('id', 'unknown')}")
+        
         if method == "initialize":
-            return handle_initialize()
+            return handle_initialize(request)  # Pass the entire request to handle_initialize
         elif method == "tools/call":
             return handle_tool_call(request)
         elif method == "shutdown":
@@ -438,6 +467,7 @@ def main_loop():
     global SERVER_STATE
     
     logging.info("Starting MCP server main loop")
+    logging.info("WAITING FOR INITIALIZE MESSAGE FROM CLAUDE...")
     
     # Ensure stdout is completely clean at startup
     sys.stdout.flush()
@@ -482,6 +512,9 @@ def main_loop():
                     reconnection_message_printed = False
                     
                 continue
+            
+            # Log that we received a message  
+            logging.info(f"Processing message: {message[:50]}...")
                 
             # Process message and get response
             try:
@@ -493,7 +526,9 @@ def main_loop():
                     continue
                     
                 # Send response
+                logging.info("Sending response to Claude...")
                 send_json_response(response)
+                logging.info("Response sent successfully")
             except Exception as e:
                 logging.error(f"Error processing or sending message: {str(e)}")
                 logging.error(f"Stack trace: {traceback.format_exc()}")

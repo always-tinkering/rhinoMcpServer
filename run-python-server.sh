@@ -80,11 +80,13 @@ start_server() {
     # Clear any existing stdout/stderr buffers
     log "Clearing I/O buffers"
     
-    # Start the Python server with clean stdio, capturing stderr for logging
-    # but keeping stdout clean for JSON communication
-    log "Executing ./standalone-mcp-server.py with clean stdio"
+    # Start the Python server with clean stdio
+    # CRITICAL: We must NOT redirect stdin, as the Python server needs to receive stdin directly from Claude
+    # We only redirect stderr to our log file, keeping stdin and stdout connected to Claude
+    log "Executing ./standalone-mcp-server.py with direct stdin/stdout connection to Claude"
     
-    # Redirect stderr to the log file but keep stdout clean for JSON
+    # CRITICAL FIX: Do not redirect stdin - let it pass straight from Claude to the Python script
+    # Only redirect stderr to our log file
     ./standalone-mcp-server.py 2>> "$LOG_FILE"
     
     # This is reached when the Python server exits
@@ -123,8 +125,13 @@ fi
 
 log "Server script found: $(ls -la ./standalone-mcp-server.py)"
 
-# Start the server 
-start_server
+# Start the server - CRITICAL: We call exec here to replace the current process
+# This ensures stdin/stdout are directly connected between Claude and the Python server
+log "Replacing wrapper with Python server process to ensure clean I/O connections"
+exec ./standalone-mcp-server.py 2>> "$LOG_FILE"
 
-# Exit with server's status code
+# Note: The code below will never be reached due to the exec command above
+# This ensures that there's no shell process in between Claude and the Python server
+log "If you see this message, exec failed!"
+start_server
 exit $? 
