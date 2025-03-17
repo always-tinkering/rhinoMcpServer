@@ -1,96 +1,138 @@
-# RhinoMcpServer
+# Rhino MCP Server
 
-A Model Context Protocol (MCP) server implementation for Rhino 3D, enabling seamless integration between Claude AI and Rhino.
+A Model Context Protocol (MCP) server implementation for Rhino 3D, allowing Claude to create and manipulate 3D objects.
 
 ## Overview
 
-This project allows Claude to control Rhino 3D through Claude Desktop by implementing the Model Context Protocol. It consists of two main components:
+This project implements an MCP server for Rhino 3D that enables AI assistants like Claude to interact with Rhino through the Model Context Protocol. The server allows for the creation and manipulation of 3D objects directly from the AI interface.
 
-1. **RhinoMcpPlugin**: A Rhino plugin (.NET 7.0) that handles commands from Claude within the Rhino environment
-2. **RhinoMcpServer**: A standalone MCP server (.NET 8.0) that bridges Claude Desktop with the Rhino plugin
+## Components
 
-## Quick Start
+There are several implementations available:
 
-1. Start Rhino
-2. Run `./check-rhino-plugin.sh` to verify the plugin connection
-3. Launch Claude Desktop
-4. Start working with Rhino tools in Claude
+1. **Combined MCP Server (Recommended)**: 
+   - `combined_mcp_server.py` - Direct implementation that uses stdin/stdout for communication
+   - `run-combined-server.sh` - Wrapper script for the combined server
 
-## Features
+2. **Socket-based Servers**:
+   - `daemon_mcp_server.py` - Background server that receives commands via socket connection
+   - `socket_proxy.py` - Proxy that forwards commands from stdin to the daemon server and back
+   
+3. **Standalone Server**:
+   - `standalone-mcp-server.py` - Original standalone implementation
+   - `run-python-server.sh` - Wrapper script for the standalone server
 
-- Create and manipulate 3D geometry (spheres, boxes, cylinders)
-- Manage scene objects and layers
-- Bidirectional communication between Claude and Rhino
-- Real-time updates and feedback
+## Setup Instructions
 
-## Detailed Architecture
+### 1. Set up Claude Desktop
 
-### RhinoMcpPlugin (Rhino Plugin)
+1. Install Claude Desktop if you haven't already
+2. Configure the MCP server connection in Claude Desktop settings
 
-- Targets .NET 7.0 for compatibility with Rhino 8
-- Implements a socket server on port 9876
-- Listens for commands from the MCP server
-- Translates commands into Rhino API calls
-- Returns results back to the MCP server
+### 2. Run the Server
 
-### RhinoMcpServer (MCP Server)
-
-- Targets .NET 8.0 for modern features and performance
-- Implements the Model Context Protocol
-- Communicates with Claude Desktop through stdin/stdout
-- Forwards tool calls to the RhinoMcpPlugin via socket connection
-- Handles asynchronous communication and error states
-
-## Development Setup
-
-### Prerequisites
-
-- Rhino 8 for Mac
-- .NET 8.0 SDK
-- Claude Desktop
-
-### Building the Solution
+#### Option 1: Combined Server (Recommended)
 
 ```bash
-# Build the plugin
-cd RhinoMcpPlugin
-dotnet build -c Release
-
-# Build the server
-cd ../RhinoMcpServer
-dotnet publish -c Release -o publish
+./run-combined-server.sh
 ```
 
-### Installing the Plugin
+This runs a direct server that communicates with Claude via stdin/stdout without any intermediate sockets.
+
+#### Option 2: Socket-based Server
 
 ```bash
-mkdir -p ~/Library/Application\ Support/McNeel/Rhinoceros/8.0/Plug-ins/RhinoMcpPlugin/
-cp RhinoMcpPlugin/bin/Release/net7.0/RhinoMcpPlugin.* ~/Library/Application\ Support/McNeel/Rhinoceros/8.0/Plug-ins/RhinoMcpPlugin/
+# First, start the daemon server
+./daemon_mcp_server.py
+
+# Then, in Claude Desktop settings, point to:
+./socket_proxy.py
 ```
 
-### Configure Claude Desktop
+This uses a socket-based approach with a persistent background daemon and a socket proxy.
 
-Create or update `~/Library/Application Support/Claude/claude_desktop_config.json`:
+#### Option 3: Standalone Server
 
-```json
-{
-  "mcpServers": {
-    "rhino": {
-      "command": "dotnet",
-      "args": [
-        "/Users/[username]/path/to/RhinoMcpServer/publish/RhinoMcpServer.dll"
-      ]
-    }
-  }
-}
+```bash
+./run-python-server.sh
 ```
+
+This runs the original standalone server implementation.
+
+## Available Tools
+
+The server provides several tools for 3D modeling:
+
+1. **geometry_tools.create_sphere** - Create a sphere with specified center and radius
+2. **geometry_tools.create_box** - Create a box with specified dimensions
+3. **geometry_tools.create_cylinder** - Create a cylinder with specified parameters
+4. **scene_tools.get_scene_info** - Get information about the current scene
+5. **scene_tools.clear_scene** - Clear objects from the scene
+6. **scene_tools.create_layer** - Create a new layer in the document
 
 ## Troubleshooting
 
-- Use `./debug-server.sh` to run the server with detailed logging
-- Use `./check-rhino-plugin.sh` to verify the Rhino plugin is installed and running
-- Check for log files in the `RhinoMcpServer/logs` directory
+If you encounter connection issues:
 
-## Version History
+1. Make sure no old servers are running:
+   ```bash
+   pkill -f "combined_mcp_server.py|daemon_mcp_server.py|socket_proxy.py|standalone-mcp_server.py"
+   ```
 
-- **0.1.0**: Initial implementation with basic geometry creation, server stability improvements, and debugging tools 
+2. Check the log files:
+   - `combined_mcp_server.log` - For the combined server
+   - `daemon_mcp_server.log` - For the daemon server
+   - `socket_proxy.log` - For the socket proxy
+
+3. Restart Claude Desktop completely
+
+## License
+
+This project is released under the MIT License. See the LICENSE file for details. 
+
+## Improved Logging System
+
+The system now features a unified logging framework that centralizes logs from all components:
+
+- Server logs
+- Plugin logs
+- Claude AI logs
+- Diagnostic logs
+
+All logs follow a consistent format and are stored in the `logs/` directory with separate subdirectories for each component.
+
+### Log Management
+
+A log management tool is provided that offers powerful capabilities for viewing, monitoring, and analyzing logs:
+
+```bash
+# View logs
+./log_manager.py view
+
+# Monitor logs in real-time
+./log_manager.py monitor
+
+# View errors with context
+./log_manager.py errors
+
+# Generate error reports
+./log_manager.py report
+```
+
+For detailed information on using the logging system, see [LOGGING.md](LOGGING.md).
+
+## Development
+
+### Project Structure
+
+- `combined_mcp_server.py`: Main MCP server implementation
+- `diagnose_rhino_connection.py`: Diagnostic tool for testing Rhino connection
+- `log_manager.py`: Tool for managing and analyzing logs
+- `run-combined-server.sh`: Script to start the MCP server
+- `logs/`: Directory containing all logs
+
+### Adding New Features
+
+1. Add new tools as methods in the `combined_mcp_server.py` file
+2. Use the existing logging framework for consistent error handling
+3. Update diagnostic tools if needed 
