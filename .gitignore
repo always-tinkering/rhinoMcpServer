@@ -151,4 +151,40 @@ venv.bak/
 *.log
 logs/
 .server_initialized
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Project specific
+logs/
+*.log
+logs/*.pid
+logs/*.path
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
 .DS_Store 
