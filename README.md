@@ -1,5 +1,11 @@
 # Rhino MCP Server
 
+> **⚠️ UNDER CONSTRUCTION ⚠️**  
+> This project is currently under active development and is not yet in working order. The Rhino plugin is experiencing issues with creating objects.
+> We are actively seeking support from the community to help resolve these issues.
+> If you have experience with Rhino API development, C# plugins, or MCP integration, please consider contributing.
+> Contact us by opening an issue on GitHub.
+
 A Model Context Protocol (MCP) server implementation for Rhino 3D, allowing Claude to create and manipulate 3D objects.
 
 ## Overview
