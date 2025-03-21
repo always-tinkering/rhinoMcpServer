@@ -12,13 +12,82 @@ A Model Context Protocol (MCP) server implementation for Rhino 3D, allowing Clau
 
 This project implements an MCP server for Rhino 3D that enables AI assistants like Claude to interact with Rhino through the Model Context Protocol. The server allows for the creation and manipulation of 3D objects directly from the AI interface.
 
+## System Architecture
+
+The system consists of Python components that implement the MCP server and C# components that integrate with Rhino. Here's an overview of how the system components interact:
+
+```mermaid
+graph TD
+    %% Client Applications
+    client[Client Applications] --> socketProxy
+    
+    %% Socket Proxy
+    subgraph "Python Socket Proxy"
+        socketProxy[socket_proxy.py] --> daemonServer
+    end
+    
+    %% Daemon Server
+    subgraph "Python Daemon Server"
+        daemonServer[daemon_mcp_server.py] --> combinedServer
+    end
+    
+    %% Combined MCP Server
+    subgraph "Python Combined MCP Server"
+        combinedServer[combined_mcp_server.py]
+        mcp[FastMCP] --> tools
+        combinedServer --> mcp
+        combinedServer --> rhinoConn
+        subgraph "MCP Tools"
+            tools[MCP Tool Methods]
+        end
+        rhinoConn[RhinoConnection]
+    end
+    
+    %% Rhino Plugin Components
+    subgraph "C# Rhino Plugin"
+        rhinoPlugin[RhinoMcpPlugin.cs]
+        socketServer[RhinoSocketServer.cs]
+        utilities[RhinoUtilities.cs]
+        commands[RhinoMcpCommand.cs]
+        
+        rhinoPlugin --> socketServer
+        rhinoPlugin --> commands
+        socketServer --> utilities
+    end
+    
+    %% Connections between components
+    rhinoConn <==> socketServer
+    
+    %% Logger Components
+    subgraph "Logging System"
+        logManager[log_manager.py]
+        nlogConfig[NLog.config]
+    end
+    
+    combinedServer --> logManager
+    rhinoPlugin --> nlogConfig
+    
+    %% Connection to Rhino
+    rhino[Rhino 3D Software]
+    rhinoPlugin --> rhino
+    
+    classDef pythonClass fill:#3572A5,color:white;
+    classDef csharpClass fill:#178600,color:white;
+    classDef rhinoClass fill:#555555,color:white;
+    
+    class socketProxy,daemonServer,combinedServer,mcp,tools,rhinoConn,logManager pythonClass;
+    class rhinoPlugin,socketServer,utilities,commands csharpClass;
+    class rhino rhinoClass;
+```
+
+For more detailed information about the system architecture, including component descriptions and data flow, see [code_architecture.md](code_architecture.md).
+
 ## Components
 
 There are several implementations available:
 
 1. **Combined MCP Server (Recommended)**: 
    - `combined_mcp_server.py` - Direct implementation that uses stdin/stdout for communication
-   - `run-combined-server.sh` - Wrapper script for the combined server
 
 2. **Socket-based Servers**:
    - `daemon_mcp_server.py` - Background server that receives commands via socket connection
@@ -26,7 +95,6 @@ There are several implementations available:
    
 3. **Standalone Server**:
    - `standalone-mcp-server.py` - Original standalone implementation
-   - `run-python-server.sh` - Wrapper script for the standalone server
 
 ## Setup Instructions
 
@@ -37,33 +105,37 @@ There are several implementations available:
 
 ### 2. Run the Server
 
-#### Option 1: Combined Server (Recommended)
+We now have a unified server launcher that allows you to run any of the server implementations:
 
 ```bash
-./run-combined-server.sh
+./server_launcher.sh [mode]
 ```
 
-This runs a direct server that communicates with Claude via stdin/stdout without any intermediate sockets.
+Available modes:
+- `combined` (default) - Run the combined MCP server
+- `standalone` - Run the standalone MCP server
+- `daemon` - Run the daemon MCP server
+- `socket-proxy` - Run the socket proxy
+- `direct` - Run both daemon and socket proxy
+- `logs` - View recent logs
+- `monitor` - Monitor logs in real-time
+- `errors` - View recent errors
+- `help` - Show help message
 
-#### Option 2: Socket-based Server
-
+Examples:
 ```bash
-# First, start the daemon server
-./daemon_mcp_server.py
+# Run the combined server (recommended)
+./server_launcher.sh combined
 
-# Then, in Claude Desktop settings, point to:
-./socket_proxy.py
+# Or simply
+./server_launcher.sh
+
+# Run the socket-based approach (daemon + proxy)
+./server_launcher.sh direct
+
+# Monitor logs in real-time
+./server_launcher.sh monitor
 ```
-
-This uses a socket-based approach with a persistent background daemon and a socket proxy.
-
-#### Option 3: Standalone Server
-
-```bash
-./run-python-server.sh
-```
-
-This runs the original standalone server implementation.
 
 ## Available Tools
 
@@ -82,13 +154,14 @@ If you encounter connection issues:
 
 1. Make sure no old servers are running:
    ```bash
-   pkill -f "combined_mcp_server.py|daemon_mcp_server.py|socket_proxy.py|standalone-mcp_server.py"
+   ./server_launcher.sh help  # This will clean up existing processes
    ```
 
 2. Check the log files:
-   - `combined_mcp_server.log` - For the combined server
-   - `daemon_mcp_server.log` - For the daemon server
-   - `socket_proxy.log` - For the socket proxy
+   ```bash
+   ./server_launcher.sh logs   # View logs
+   ./server_launcher.sh errors # View errors
+   ```
 
 3. Restart Claude Desktop completely
 
@@ -98,7 +171,7 @@ This project is released under the MIT License. See the LICENSE file for details
 
 ## Improved Logging System
 
-The system now features a unified logging framework that centralizes logs from all components:
+The system features a unified logging framework that centralizes logs from all components:
 
 - Server logs
 - Plugin logs
@@ -113,15 +186,15 @@ A log management tool is provided that offers powerful capabilities for viewing,
 
 ```bash
 # View logs
-./log_manager.py view
+./server_launcher.sh logs
 
 # Monitor logs in real-time
-./log_manager.py monitor
+./server_launcher.sh monitor
 
 # View errors with context
-./log_manager.py errors
+./server_launcher.sh errors
 
-# Generate error reports
+# Generate error reports (using the log manager directly)
 ./log_manager.py report
 ```
 
@@ -134,7 +207,7 @@ For detailed information on using the logging system, see [LOGGING.md](LOGGING.m
 - `combined_mcp_server.py`: Main MCP server implementation
 - `diagnose_rhino_connection.py`: Diagnostic tool for testing Rhino connection
 - `log_manager.py`: Tool for managing and analyzing logs
-- `run-combined-server.sh`: Script to start the MCP server
+- `server_launcher.sh`: Unified script to start any server implementation
 - `logs/`: Directory containing all logs
 
 ### Adding New Features
