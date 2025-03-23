@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <RunConfiguration>
+    <TargetFrameworkVersion>net7.0</TargetFrameworkVersion>
+    <TestAdaptersPaths>.</TestAdaptersPaths>
+    <ResultsDirectory>./TestResults</ResultsDirectory>
+    <CollectSourceInformation>false</CollectSourceInformation>
+  </RunConfiguration>
+  <MSTest>
+    <MapInconclusiveToFailed>false</MapInconclusiveToFailed>
+    <CaptureTraceOutput>true</CaptureTraceOutput>
+    <DeleteDeploymentDirectoryAfterTestRunIsComplete>true</DeleteDeploymentDirectoryAfterTestRunIsComplete>
+    <DeploymentEnabled>false</DeploymentEnabled>
+  </MSTest>
+  <NUnit>
+    <NumberOfTestWorkers>1</NumberOfTestWorkers>
+  </NUnit>
+  <TestRunParameters>
+    <Parameter name="RhinoPath" value="/Applications/Rhino 8.app" />
+  </TestRunParameters>
+</RunSettings> 
